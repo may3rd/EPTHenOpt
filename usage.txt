@@ -1,0 +1,96 @@
+usage: hen_synthesis_epoch.py [-h] [--streams_file STREAMS_FILE] [--utilities_file UTILITIES_FILE]
+                              [--matches_U_file MATCHES_U_FILE]
+                              [--forbidden_matches_file FORBIDDEN_MATCHES_FILE]
+                              [--required_matches_file REQUIRED_MATCHES_FILE]
+                              [--EMAT_setting EMAT_SETTING] [--model {GA,TLBO}]
+                              [--population_size POPULATION_SIZE] [--epochs EPOCHS]
+                              [--generations_per_epoch GENERATIONS_PER_EPOCH]
+                              [--number_of_workers NUMBER_OF_WORKERS] [--num_stages NUM_STAGES]
+                              [--default_U_overall DEFAULT_U_OVERALL]
+                              [--default_exch_fixed_cost DEFAULT_EXCH_FIXED_COST]
+                              [--default_exch_area_coeff DEFAULT_EXCH_AREA_COEFF]
+                              [--default_exch_area_exp DEFAULT_EXCH_AREA_EXP]
+                              [--ga_crossover_prob GA_CROSSOVER_PROB]
+                              [--ga_mutation_prob_Z_setting GA_MUTATION_PROB_Z_SETTING]
+                              [--ga_mutation_prob_R_setting GA_MUTATION_PROB_R_SETTING]
+                              [--ga_r_mutation_std_dev_factor_setting GA_R_MUTATION_STD_DEV_FACTOR_SETTING]
+                              [--ga_elitism_frac GA_ELITISM_FRAC]
+                              [--ga_tournament_size GA_TOURNAMENT_SIZE]
+                              [--tlbo_teaching_factor {0,1,2}]
+                              [--utility_cost_factor UTILITY_COST_FACTOR]
+                              [--pinch_dev_penalty_factor PINCH_DEV_PENALTY_FACTOR]
+                              [--sws_max_iter SWS_MAX_ITER] [--sws_conv_tol SWS_CONV_TOL]
+                              [--initial_penalty INITIAL_PENALTY] [--final_penalty FINAL_PENALTY]
+
+Run Heat Exchanger Network (HEN) Synthesis Optimization using EPTHenOpt.
+
+options:
+  -h, --help            show this help message and exit
+
+File Path Arguments:
+  --streams_file STREAMS_FILE
+                        Path to the streams CSV file. (default: streams.csv)
+  --utilities_file UTILITIES_FILE
+                        Path to the utilities CSV file. (default: utilities.csv)
+  --matches_U_file MATCHES_U_FILE
+                        Optional: CSV for specific match costs/U-values. (default: None)
+  --forbidden_matches_file FORBIDDEN_MATCHES_FILE
+                        Optional: CSV for forbidden matches. (default: None)
+  --required_matches_file REQUIRED_MATCHES_FILE
+                        Optional: CSV for required matches. (default: None)
+
+Core Optimization Arguments:
+  --model {GA,TLBO}     Optimization model to use. (default: GA)
+  --population_size POPULATION_SIZE
+                        Population size for the optimizer. (default: 200)
+  --epochs EPOCHS       Number of epochs for optimizer runs. (default: 10)
+  --generations_per_epoch GENERATIONS_PER_EPOCH
+                        Number of generations to run per epoch. (default: 20)
+  --number_of_workers NUMBER_OF_WORKERS
+                        Number of parallel workers (<=1 for sequential). (default: 1)
+  --num_stages NUM_STAGES
+                        HEN superstructure stages (0 to auto-calculate). (default: 0)
+
+Problem & Cost Parameters:
+  --EMAT_setting EMAT_SETTING
+                        Minimum Approach Temperature (EMAT) in K. (default: 3.0)
+  --default_U_overall DEFAULT_U_OVERALL
+                        Default overall heat transfer coefficient (U). (default: 0.5)
+  --default_exch_fixed_cost DEFAULT_EXCH_FIXED_COST
+                        Default fixed cost for exchangers. (default: 0.0)
+  --default_exch_area_coeff DEFAULT_EXCH_AREA_COEFF
+                        Default area coefficient for exchangers. (default: 1000.0)
+  --default_exch_area_exp DEFAULT_EXCH_AREA_EXP
+                        Default area exponent for exchangers. (default: 0.6)
+
+GA Specific Parameters:
+  --ga_crossover_prob GA_CROSSOVER_PROB
+                        Crossover probability. (default: 0.85)
+  --ga_mutation_prob_Z_setting GA_MUTATION_PROB_Z_SETTING
+                        Mutation probability for Z matrix. (default: 0.1)
+  --ga_mutation_prob_R_setting GA_MUTATION_PROB_R_SETTING
+                        Mutation probability for R matrices. (default: 0.1)
+  --ga_r_mutation_std_dev_factor_setting GA_R_MUTATION_STD_DEV_FACTOR_SETTING
+                        Std dev factor for R mutation. (default: 0.1)
+  --ga_elitism_frac GA_ELITISM_FRAC
+                        Fraction of population for elitism. (default: 0.1)
+  --ga_tournament_size GA_TOURNAMENT_SIZE
+                        Tournament size for selection. (default: 3)
+
+TLBO Specific Parameters:
+  --tlbo_teaching_factor {0,1,2}
+                        TLBO Teaching Factor (TF). 0 for random (1 or 2). (default: 0)
+
+Fitness & Penalty Parameters:
+  --utility_cost_factor UTILITY_COST_FACTOR
+                        Factor on utility op-ex in TAC. (default: 1.0)
+  --pinch_dev_penalty_factor PINCH_DEV_PENALTY_FACTOR
+                        Penalty for deviation from pinch targets. (default: 150.0)
+  --sws_max_iter SWS_MAX_ITER
+                        Max iterations for SWS calculation. (default: 300)
+  --sws_conv_tol SWS_CONV_TOL
+                        Convergence tolerance for SWS. (default: 1e-05)
+  --initial_penalty INITIAL_PENALTY
+                        Initial adaptive penalty factor. (default: 1000.0)
+  --final_penalty FINAL_PENALTY
+                        Final adaptive penalty factor. (default: 10000000.0)

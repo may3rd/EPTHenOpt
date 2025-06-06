@@ -1,17 +1,23 @@
 # gth/base_optimizer.py
+"""
+Base optimizer module for the EPTHenOpt package.
+
+This module defines the `BaseOptimizer` class, which serves as the foundation
+for all optimization algorithms in the package. It encapsulates the shared
+logic for problem handling, population management, and fitness calculation,
+including the complex Sequential Workspace Synthesis (SWS) and cost evaluation.
+"""
 import numpy as np
 import random
-import copy
-import time # For seeding in subclasses if needed
 
-from .hen_models import HENProblem # Assuming HENProblem is in hen_models.py
-from .utils import calculate_lmtd # Assuming calculate_lmtd is in utils.py
+from .hen_models import HENProblem
+from .utils import calculate_lmtd
 
 class BaseOptimizer:
     def __init__(self, 
                  problem: HENProblem,
                  population_size: int,
-                 generations: int, # Total generations if run sequentially
+                 generations: int,
                  random_seed=None,
                  utility_cost_factor=1.0,
                  pinch_deviation_penalty_factor=0.0,
@@ -19,11 +25,11 @@ class BaseOptimizer:
                  sws_conv_tol=0.001,
                  initial_penalty=1e3,
                  final_penalty=1e7,
-                 **kwargs): # To catch any other common or specific params
+                 **kwargs):
 
         self.problem: HENProblem = problem
         self.population_size = population_size
-        self.generations = generations # Total generations for a full run
+        self.generations = generations
         self.random_seed = random_seed
         
         # Common parameters for fitness calculation
@@ -94,13 +100,6 @@ class BaseOptimizer:
         NC = self.problem.NC
         ST = self.problem.num_stages
         EMAT = self.problem.cost_params.EMAT
-        
-        # Cost parameters from problem instance
-        # CF_process = self.problem.cost_params.exch_fixed # Example, ensure all are covered
-        # C_area_process = self.problem.cost_params.exch_area_coeff
-        # B_exp_process = self.problem.cost_params.exch_area_exp
-        # hot_util_obj = self.problem.hot_utility # This is a list now
-        # cold_util_obj = self.problem.cold_utility # This is a list now
 
         capital_cost_process_exchangers = 0.0
         capital_cost_heaters = 0.0

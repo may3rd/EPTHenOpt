@@ -1,4 +1,10 @@
 # tests/test_base_optimizer.py
+"""
+Unit tests for the BaseOptimizer class and its core functionalities.
+
+This includes tests for fitness calculation, adaptive penalty application,
+and handling of SWS (Sequential Workspace Synthesis) convergence and failures.
+"""
 import pytest
 import numpy as np
 from EPTHenOpt.hen_models import Stream, Utility, CostParameters, HENProblem

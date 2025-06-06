@@ -1,5 +1,17 @@
 # EPTHenOpt/hen_models.py
+"""
+Data models for Heat Exchanger Network (HEN) problems in the EPTHenOpt package.
+
+This module contains the core classes for defining a HEN problem, including:
+- Stream: Represents hot and cold process streams.
+- Utility: Represents hot and cold utilities.
+- CostParameters: Encapsulates all cost-related parameters for the network.
+- HENProblem: The main class that aggregates all problem data and provides
+  methods for pinch analysis and chromosome decoding.
+"""
 import numpy as np
+
+SMALL_TOL = 1e-9
 
 class Stream:
     def __init__(self, id_val=None, Tin=None, Tout_target=None, CP=None,
@@ -28,9 +40,9 @@ class Utility:
         self.type = utility_type
         
 class CostParameters:
-    def __init__(self, exch_fixed=0.0, exch_area_coeff=1000.0, exch_area_exp=0.6,
-                 heater_fixed=0.0, heater_area_coeff=1200.0, heater_area_exp=0.6,
-                 cooler_fixed=0.0, cooler_area_coeff=1000.0, cooler_area_exp=0.6,
+    def __init__(self, exch_fixed=0.0, exch_area_coeff=0.0, exch_area_exp=0.0,
+                 heater_fixed=0.0, heater_area_coeff=0.0, heater_area_exp=0.0,
+                 cooler_fixed=0.0, cooler_area_coeff=0.0, cooler_area_exp=0.0,
                  EMAT=10.0, U_overall=None):
         self.exch_fixed = exch_fixed
         self.exch_area_coeff = exch_area_coeff
@@ -64,21 +76,21 @@ class HENProblem:
         self.forbidden_matches = forbidden_matches
         self.required_matches = required_matches
         
-        self.U_matrix_process = np.zeros((self.NH, self.NC))
+        self.U_matrix_process = np.ones((self.NH, self.NC))
         self.fixed_cost_process_exchangers = np.zeros((self.NH, self.NC))
         self.area_cost_process_coeff = np.zeros((self.NH, self.NC))
         self.area_cost_process_exp = np.zeros((self.NH, self.NC))
         
-        self.U_heaters = np.zeros((self.NHU, self.NC))
-        self.U_coolers = np.zeros((self.NH, self.NCU))
+        self.U_heaters = np.ones((self.NHU, self.NC))
+        self.U_coolers = np.ones((self.NH, self.NCU))
         
         if cost_params:
-            self.U_matrix_process.fill(cost_params.U_overall if cost_params.U_overall is not None else 0)
+            self.U_matrix_process.fill(cost_params.U_overall if cost_params.U_overall is not None else 1.0)
             self.fixed_cost_process_exchangers.fill(cost_params.exch_fixed)
             self.area_cost_process_coeff.fill(cost_params.exch_area_coeff)
             self.area_cost_process_exp.fill(cost_params.exch_area_exp)
-            self.U_heaters.fill(cost_params.U_overall if cost_params.U_overall is not None else 0)
-            self.U_coolers.fill(cost_params.U_overall if cost_params.U_overall is not None else 0)
+            self.U_heaters.fill(cost_params.U_overall if cost_params.U_overall is not None else 1.0)
+            self.U_coolers.fill(cost_params.U_overall if cost_params.U_overall is not None else 1.0)
         
         if matches_U_cost:
             hot_stream_ids = {hs.id: idx for idx, hs in enumerate(self.hot_streams)}
@@ -92,44 +104,43 @@ class HENProblem:
                     self.fixed_cost_process_exchangers[i,j] = float(match_spec.get('fix_cost', self.fixed_cost_process_exchangers[i,j]))
                     self.area_cost_process_coeff[i,j] = float(match_spec.get('area_cost_coeff', self.area_cost_process_coeff[i,j]))
                     self.area_cost_process_exp[i,j] = float(match_spec.get('area_cost_exp', self.area_cost_process_exp[i,j]))
-
-        if cost_params and cost_params.U_overall is None:
+        else:
             for i in range(self.NH):
                 for j in range(self.NC):
-                    if self.U_matrix_process[i,j] == 0:
-                        h_hot = self.hot_streams[i].h if self.hot_streams[i].h is not None and self.hot_streams[i].h > 1e-9 else 1e9
-                        h_cold = self.cold_streams[j].h if self.cold_streams[j].h is not None and self.cold_streams[j].h > 1e-9 else 1e9
-                        if (self.hot_streams[i].h is None or self.hot_streams[i].h <= 1e-9) or \
-                           (self.cold_streams[j].h is None or self.cold_streams[j].h <= 1e-9):
-                            self.U_matrix_process[i,j] = 1e-6
+                    if self.U_matrix_process[i,j] == 1.0:
+                        h_hot = self.hot_streams[i].h if self.hot_streams[i].h is not None and self.hot_streams[i].h > SMALL_TOL else 1e9
+                        h_cold = self.cold_streams[j].h if self.cold_streams[j].h is not None and self.cold_streams[j].h > SMALL_TOL else 1e9
+                        if (self.hot_streams[i].h is None or self.hot_streams[i].h <= SMALL_TOL) or \
+                           (self.cold_streams[j].h is None or self.cold_streams[j].h <= SMALL_TOL):
+                            self.U_matrix_process[i,j] = 1.0
                         else:
                             self.U_matrix_process[i, j] = 1.0 / (1.0/h_hot + 1.0/h_cold)
                         
             if self.hot_utility:
                 for iu in range(self.NHU):
                     for j in range(self.NC):
-                        if self.U_heaters[iu,j] == 0:
-                            h_hot_util = self.hot_utility[iu].h if self.hot_utility[iu].h is not None and self.hot_utility[iu].h > 1e-9 else 1e9
-                            if self.hot_utility[iu].U is not None:
+                        if self.U_heaters[iu,j] == 1.0:
+                            h_hot_util = self.hot_utility[iu].h if self.hot_utility[iu].h is not None and self.hot_utility[iu].h > SMALL_TOL else 1e9
+                            if self.hot_utility[iu].U is not None and self.hot_utility[iu].U > SMALL_TOL:
                                 self.U_heaters[iu,j] = self.hot_utility[iu].U
                             else:
-                                h_cold_stream = self.cold_streams[j].h if self.cold_streams[j].h is not None and self.cold_streams[j].h > 1e-9 else 1e9
-                                if (h_hot_util <=1e-9) or (h_cold_stream <= 1e-9):
-                                    self.U_heaters[iu,j] = 1e-6
+                                h_cold_stream = self.cold_streams[j].h if self.cold_streams[j].h is not None and self.cold_streams[j].h > SMALL_TOL else 1e9
+                                if (h_hot_util <=SMALL_TOL) or (h_cold_stream <= SMALL_TOL):
+                                    self.U_heaters[iu,j] = 1.0
                                 else:
                                     self.U_heaters[iu,j] = 1.0 / (1.0/h_hot_util + 1.0/h_cold_stream)
                                 
             if self.cold_utility:
                 for ic in range(self.NCU):
                     for i in range(self.NH):
-                        if self.U_coolers[i,ic] == 0:
-                            h_cold_util = self.cold_utility[ic].h if self.cold_utility[ic].h is not None and self.cold_utility[ic].h > 1e-9 else 1e9
-                            if self.cold_utility[ic].U is not None:
+                        if self.U_coolers[i,ic] == 1.0:
+                            h_cold_util = self.cold_utility[ic].h if self.cold_utility[ic].h is not None and self.cold_utility[ic].h > SMALL_TOL else 1e9
+                            if self.cold_utility[ic].U is not None and self.cold_utility[ic].U > SMALL_TOL:
                                 self.U_coolers[i,ic] = self.cold_utility[ic].U
                             else:
-                                h_hot_stream = self.hot_streams[i].h if self.hot_streams[i].h is not None and self.hot_streams[i].h > 1e-9 else 1e9
-                                if (h_cold_util <=1e-9) or (h_hot_stream <= 1e-9):
-                                    self.U_coolers[i,ic] = 1e-6
+                                h_hot_stream = self.hot_streams[i].h if self.hot_streams[i].h is not None and self.hot_streams[i].h > SMALL_TOL else 1e9
+                                if (h_cold_util <=SMALL_TOL) or (h_hot_stream <= SMALL_TOL):
+                                    self.U_coolers[i,ic] = 1.0
                                 else:
                                     self.U_coolers[i,ic] = 1.0 / (1.0/h_cold_util + 1.0/h_hot_stream)
         
@@ -200,8 +211,8 @@ class HENProblem:
             t_pinch_hot, t_pinch_cold = None, None
 
         # Clean up near-zero values
-        if abs(q_h_min) < 1e-6: q_h_min = 0.0
-        if abs(q_c_min) < 1e-6: q_c_min = 0.0
+        if abs(q_h_min) < SMALL_TOL: q_h_min = 0.0
+        if abs(q_c_min) < SMALL_TOL: q_c_min = 0.0
         
         return q_h_min, q_c_min, t_pinch_hot, t_pinch_cold
     

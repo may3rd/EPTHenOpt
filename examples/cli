@@ -1,0 +1,1 @@
+run_hen_problem --matches_U_file ./matches_U_cost.csv --model GA --epochs 10 --population_size 200 --number_of_workers 8 --EMAT_setting 3.0 --ga_tournament_size 4 --ga_elitism_frac 0.1

@@ -1,9 +1,15 @@
 # gth/ga_helpers.py
+"""
+Genetic Algorithm (GA) helpers module for the EPTHenOpt package.
+
+This module provides the `GeneticAlgorithmHEN` class, which implements the
+Genetic Algorithm for solving Heat Exchanger Network (HEN) synthesis problems.
+It includes mechanisms for selection, crossover, and mutation tailored to the
+HEN chromosome structure.
+"""
 import random
 import copy
 import numpy as np
-# Removed direct import of Stream, Utility, HENProblem as they come via BaseOptimizer's problem
-# Removed import of calculate_lmtd as it's used in BaseOptimizer._calculate_fitness
 
 from .base_optimizer import BaseOptimizer # Import the new base class
 
@@ -153,10 +159,6 @@ class GeneticAlgorithmHEN(BaseOptimizer):
             self.best_chromosome_overall = current_population_evaluations[0]['chromosome'].copy()
             self.best_details_overall = copy.deepcopy(current_population_evaluations[0]['details'])
         
-        # print_prefix = f"Run {run_id_for_print} - GA - " if run_id_for_print else "GA - "
-        # overall_best_true_str = f"{self.best_costs_overall_dict['TAC_true_report']:.2f}" if self.best_costs_overall_dict['TAC_true_report']!=float('inf') else "Inf"
-        # print(f"{print_prefix}Gen {gen_num+1:03d} - Best True TAC (Overall): {overall_best_true_str}, GA TAC: {self.best_costs_overall_dict['TAC_GA_optimizing']:.2f}")
-
         new_population = []
         for i in range(min(self.elitism_count, len(current_population_evaluations))):
             new_population.append(current_population_evaluations[i]['chromosome'].copy())

@@ -1,4 +1,12 @@
 # EPTHenOpt/utils.py
+"""
+Utility functions for the EPTHenOpt package.
+
+This module provides a collection of helper functions used across the package.
+Responsibilities include loading problem data from CSV files, calculating the
+Log Mean Temperature Difference (LMTD), and formatting and displaying the
+final optimization results in a human-readable format.
+"""
 import csv
 import math
 import numpy as np # Added for np.argwhere
@@ -278,10 +286,9 @@ def display_optimization_results(all_run_results, hen_problem_instance, model_na
             Q_hot_util_op_val, Q_cold_util_op_val = 0.0, 0.0
             
             print("\n  Process Heat Exchangers:")
-            has_process_exchangers = False
+            process_exchangers_count = 0
             for detail in details_overall:
                 if 'H' in detail and 'C' in detail and 'type' not in detail: # Process Exchanger
-                    has_process_exchangers = True
                     hot_stream_obj = hen_problem_instance.hot_streams[detail['H']]
                     cold_stream_obj = hen_problem_instance.cold_streams[detail['C']]
                     hot_name = hot_stream_obj.id
@@ -305,45 +312,48 @@ def display_optimization_results(all_run_results, hen_problem_instance, model_na
                     if abs(Tc_in_val - Tc_out_val) > 1e-6: cold_CFp = Q_val / abs(Tc_in_val - Tc_out_val)
                     if cold_stream_obj.CP > 1e-6: cold_Split_ratio = cold_CFp / cold_stream_obj.CP
 
-                    print(f"    {hot_name}-{cold_name} (Stage {detail.get('k',0)+1}): Q={Q_val:.2f} kW, Area={Area_val:.2f} m^2")
+                    print(f"  {process_exchangers_count+1:2d}  {hot_name}-{cold_name} (Stage {detail.get('k',0)+1}): Q={Q_val:.2f} kW, Area={Area_val:.2f} m^2")
                     print(f"      {hot_name}: FlowCp_branch={hot_CFp:.2f} (SplitFrac={hot_Split_ratio:.3f}), Tin={Th_in_val:.1f} K, Tout={Th_out_val:.1f} K")
-                    print(f"      {cold_name}: FlowCp_branch={cold_CFp:.2f} (SplitFrac={cold_Split_ratio:.3f}), Tin={Tc_in_val:.1f} K, Tout={Tc_out_val:.1f} K")
+                    print(f"      {cold_name}: FlowCp_branch={cold_CFp:.2f} (SplitFrac={cold_Split_ratio:.3f}), Tin={Tc_in_val:.1f} K, Tout={Tc_out_val:.1f} K\n")
+                    
+                    process_exchangers_count += 1
                     total_Q_recovered += Q_val
                     total_area_process_exch += Area_val
-            if not has_process_exchangers:
+            if process_exchangers_count == 0:
                 print("    None.")
+                
+            print(f"  Total process exchangers: {process_exchangers_count}")
             print(f"  Total Q Recovered (Process Exchangers): {total_Q_recovered:.2f} kW")
             print(f"  Total Area (Process Exchangers): {total_area_process_exch:.2f} m^2")
             
             print("\n  Utility Units:")
-            has_heaters = False
+            heaters_count, coolers_count = 0, 0
             for detail in details_overall:
                 if detail.get('type') == 'heater':
-                    has_heaters = True
+                    heaters_count += 1
                     cold_stream_obj = hen_problem_instance.cold_streams[detail['C_idx']]
-                    print(f"    Heater for {cold_stream_obj.id}: Q={detail.get('Q',0):.2f} kW, Area={detail.get('Area',0):.2f} m^2, Tc_in={detail.get('Tc_in',0):.1f} K, Tc_out={detail.get('Tc_out',0):.1f} K")
+                    print(f"     {heaters_count:2d} Heater for {cold_stream_obj.id}: Q={detail.get('Q',0):.2f} kW, Area={detail.get('Area',0):.2f} m^2, Tc_in={detail.get('Tc_in',0):.1f} K, Tc_out={detail.get('Tc_out',0):.1f} K")
                     Q_hot_util_op_val += detail.get('Q',0)
-            if not has_heaters:
+            if heaters_count == 0:
                 print("    No Heaters.")
 
-            has_coolers = False
             for detail in details_overall:
                 if detail.get('type') == 'cooler':
-                    has_coolers = True
+                    coolers_count += 1
                     hot_stream_obj = hen_problem_instance.hot_streams[detail['H_idx']]
-                    print(f"    Cooler for {hot_stream_obj.id}: Q={detail.get('Q',0):.2f} kW, Area={detail.get('Area',0):.2f} m^2, Th_in={detail.get('Th_in',0):.1f} K, Th_out={detail.get('Th_out',0):.1f} K")
+                    print(f"   {coolers_count:2d} Cooler for {hot_stream_obj.id}: Q={detail.get('Q',0):.2f} kW, Area={detail.get('Area',0):.2f} m^2, Th_in={detail.get('Th_in',0):.1f} K, Th_out={detail.get('Th_out',0):.1f} K")
                     Q_cold_util_op_val += detail.get('Q',0)
-            if not has_coolers:
+            if coolers_count == 0:
                 print("    No Coolers.")
             
             if Q_hot_util_op_val > 1e-6 or Q_cold_util_op_val > 1e-6:
                 print(f"\n  Utility Duty Summary:")
-                if Q_cold_util_op_val > 1e-6: print(f"    Total Cold Utility Duty: {Q_cold_util_op_val:.2f} kW")
-                else: print(f"    No Cold Utility Duty required.")    
-                if Q_hot_util_op_val > 1e-6: print(f"    Total Hot Utility Duty: {Q_hot_util_op_val:.2f} kW")
-                else: print(f"    No Hot Utility Duty required.")
+                if Q_cold_util_op_val > 1e-6: print(f"    Total Cold Utility {coolers_count} Exchanger{'s' if coolers_count > 1 else ''}:, total duty: {Q_cold_util_op_val:.2f} kW")
+                else: print(f"    No Cold Utility required.")    
+                if Q_hot_util_op_val > 1e-6: print(f"    Total Hot Utility: {heaters_count} Exchanger{'s' if coolers_count > 1 else ''}, total duty: {Q_hot_util_op_val:.2f} kW")
+                else: print(f"    No Hot Utility required.")
             else:
-                print(f"\n  No Utility Duty Required by the best solution.")
+                print(f"\n  Neither Hot or Cold Utility Required by the best solution.")
         else:
             print("  Best solution chromosome, details, or HEN problem instance are missing. Cannot print detailed structure.")
     else:

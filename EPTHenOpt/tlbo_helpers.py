@@ -1,9 +1,16 @@
 # EPTHenOpt/tlbo_helpers.py
+"""
+Teaching-Learning-Based Optimization (TLBO) helpers for the EPTHenOpt package.
+
+This module provides the `TeachingLearningBasedOptimizationHEN` class, which
+implements the TLBO algorithm for HEN synthesis. It includes the logic for
+the 'Teacher Phase' and 'Learner Phase' adapted to the HEN problem domain.
+"""
 import copy
 import numpy as np
 import random
 
-from .base_optimizer import BaseOptimizer # Import the new base class
+from .base_optimizer import BaseOptimizer
 
 class TeachingLearningBasedOptimizationHEN(BaseOptimizer):
     def __init__(self,

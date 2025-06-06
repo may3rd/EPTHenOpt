@@ -3,7 +3,7 @@
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Python Version](https://img.shields.io/badge/python-3.8+-brightgreen.svg)
 ![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)
-![Version](https://img.shields.io/badge/version-0.3.0-informational)
+![Version](httpshttps://img.shields.io/badge/version-0.3.0-informational)
 
 ---
 
@@ -12,6 +12,12 @@
 **EPTHenOpt** is a powerful Python package designed for the synthesis and optimization of Heat Exchanger Networks (HEN). The goal of HEN synthesis is to design a network of heat exchangers that minimizes the total annualized cost (TAC) by maximizing heat recovery between hot and cold process streams, thereby reducing the need for expensive external utilities.
 
 This package provides robust, easy-to-use implementations of two powerful metaheuristic algorithms—**Genetic Algorithm (GA)** and **Teaching-Learning-Based Optimization (TLBO)**—specifically adapted for the complexities of HEN problems. It is built to serve academic, research, and industrial users who are interested in process integration, energy efficiency, and systems optimization.
+
+## Theoretical Foundation
+
+The optimization engine in this package is based on the **Stage-Wise Superstructure (SWS)** model, a foundational concept in HEN synthesis developed by Yee and Grossmann (1990). This approach allows for the simultaneous optimization of energy and capital costs without relying on pinch-based heuristics.
+
+For a detailed explanation of the underlying methodology and its academic context, please see our **[literature review and background](./LITERATURE.md)**.
 
 ## Features
 
@@ -133,6 +139,7 @@ All input data is provided through CSV files. The default filenames are listed b
 | File/Folder                   | Description                                                                        |
 | ----------------------------- | ---------------------------------------------------------------------------------- |
 | `setup.py`                    | The main setup script for package installation and CLI entry point definition.     |
+| `LITERATURE.md`               | An explanation of the underlying Stage-Wise Superstructure (SWS) model.            |
 | `run_problem.py`              | Contains the logic for the `run_hen_problem` command-line tool.                    |
 | `EPTHenOpt/`                  | The core Python package source code.                                               |
 | `EPTHenOpt/__init__.py`       | Defines the package's public API, including the `EPTHenOpt.run()` function.        |

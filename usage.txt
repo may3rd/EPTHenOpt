@@ -1,4 +1,4 @@
-usage: hen_synthesis_epoch.py [-h] [--streams_file STREAMS_FILE] [--utilities_file UTILITIES_FILE]
+usage: run_problem.py [-h] [--streams_file STREAMS_FILE] [--utilities_file UTILITIES_FILE]
                               [--matches_U_file MATCHES_U_FILE]
                               [--forbidden_matches_file FORBIDDEN_MATCHES_FILE]
                               [--required_matches_file REQUIRED_MATCHES_FILE]

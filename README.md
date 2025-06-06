@@ -30,6 +30,7 @@ This package provides robust, easy-to-use implementations of two powerful metahe
 To get started with EPTHenOpt, clone the repository and install the required dependencies.
 
 1.  **Clone the repository:**
+
     ```bash
     git clone [https://github.com/your-username/EPTHenOpt.git](https://github.com/your-username/EPTHenOpt.git)
     cd EPTHenOpt
@@ -43,7 +44,7 @@ To get started with EPTHenOpt, clone the repository and install the required dep
 
 ## Usage
 
-The primary way to use EPTHenOpt is via the command-line interface (CLI) provided by the `hen_synthesis_epoch.py` script.
+The primary way to use EPTHenOpt is via the command-line interface (CLI) provided by the `run_problem.py` script.
 
 ### Running via Command Line (CLI)
 
@@ -54,7 +55,7 @@ You can run an optimization with default settings or customize it using a wide r
 This command runs the optimization using the default Genetic Algorithm (`GA`) model with the `streams.csv` and `utilities.csv` files in the root directory.
 
 ```bash
-python hen_synthesis_epoch.py
+python run_problem.py
 ```
 
 **Advanced Example (using TLBO with Parallel Workers):**
@@ -62,7 +63,7 @@ python hen_synthesis_epoch.py
 This command runs the optimization using the Teaching-Learning-Based Optimization (`TLBO`) model, utilizing 4 parallel workers for 50 epochs.
 
 ```bash
-python hen_synthesis_epoch.py --model TLBO --number_of_workers 4 --epochs 50 --generations_per_epoch 25
+python run_problem.py --model TLBO --number_of_workers 4 --epochs 50 --generations_per_epoch 25
 ```
 
 **Displaying Help:**
@@ -70,7 +71,7 @@ python hen_synthesis_epoch.py --model TLBO --number_of_workers 4 --epochs 50 --g
 To see a full list of all available command-line arguments and their descriptions, use the `--help` or `-h` flag.
 
 ```bash
-python hen_synthesis_epoch.py --help
+python run_problem.py --help
 ```
 
 ### Input Data Format
@@ -78,13 +79,15 @@ python hen_synthesis_epoch.py --help
 All input data is provided through CSV files. The default filenames are listed below, but you can specify different paths via CLI arguments.
 
 -   **`streams.csv`**: Defines the process streams.
+
     -   `Name`: Unique identifier for the stream (e.g., H1, C1).
     -   `Type`: `hot` or `cold`.
     -   `TIN_spec`: Inlet temperature (K).
     -   `TOUT_spec`: Target outlet temperature (K).
     -   `Fcp`: Heat capacity flowrate (kW/K).
 
-    *Example (`streams.csv`):*
+    _Example (`streams.csv`):_
+
     ```csv
     Name,Type,TIN_spec,TOUT_spec,Fcp
     H1,Hot,443,333,30
@@ -94,13 +97,15 @@ All input data is provided through CSV files. The default filenames are listed b
     ```
 
 -   **`utilities.csv`**: Defines the available hot and cold utilities.
+
     -   `Name`: Unique identifier (e.g., S1, W1).
     -   `Type`: `hot_utility` or `cold_utility`.
     -   `TIN_utility`, `TOUT_utility`: Inlet and outlet temperatures (K).
     -   `Unit_Cost_Energy`: Cost per unit of energy ($/kW).
     -   `U_overall`, `Fixed_Cost_Unit`, `Area_Cost_Coeff`, `Area_Cost_Exp`: Parameters for cost calculation.
 
-    *Example (`utilities.csv`):*
+    _Example (`utilities.csv`):_
+
     ```csv
     Name,Type,TIN_utility,TOUT_utility,Unit_Cost_Energy,U_overall,Fixed_Cost_Unit,Area_Cost_Coeff,Area_Cost_Exp
     S1,Hot_Utility,450,450,80,1.2,0,1200,0.6
@@ -114,6 +119,7 @@ All input data is provided through CSV files. The default filenames are listed b
 ### Output Interpretation
 
 The script will print real-time progress and a final summary to the console. The summary includes:
+
 -   A breakdown of the HEN problem (streams and utilities).
 -   The Total Annualized Cost (TAC) of the best solution found.
 -   A detailed cost breakdown (CapEx, OpEx, penalties).
@@ -121,21 +127,21 @@ The script will print real-time progress and a final summary to the console. The
 
 ## File Descriptions
 
-| File/Folder                  | Description                                                                                             |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `hen_synthesis_epoch.py`     | Main executable script for running HEN optimizations from the command line.                             |
-| `EPTHenOpt/`                 | The core Python package source code.                                                                    |
-| `EPTHenOpt/__init__.py`      | Defines the package's public API.                                                                       |
-| `EPTHenOpt/hen_models.py`    | Contains the data models: `Stream`, `Utility`, `CostParameters`, and `HENProblem`.                      |
-| `EPTHenOpt/base_optimizer.py`| Base class for all optimizers, containing the shared fitness calculation logic.                         |
-| `EPTHenOpt/ga_helpers.py`    | Implementation of the `GeneticAlgorithmHEN` optimizer.                                                  |
-| `EPTHenOpt/tlbo_helpers.py`  | Implementation of the `TeachingLearningBasedOptimizationHEN` optimizer.                                 |
-| `EPTHenOpt/cores.py`         | Manages parallel processing and inter-worker communication (migration).                                 |
-| `EPTHenOpt/utils.py`         | Utility functions for loading data, calculating LMTD, and displaying results.                           |
-| `tests/`                     | Contains unit tests for the package components.                                                         |
-| `*.csv`                      | Default input data files for streams, utilities, and match constraints.                                 |
-| `requirements.txt`           | A list of Python package dependencies.                                                                  |
-| `usage.txt`                  | A text file containing the full command-line help message.                                              |
+| File/Folder                   | Description                                                                        |
+| ----------------------------- | ---------------------------------------------------------------------------------- |
+| `run_problem.py`              | Main executable script for running HEN optimizations from the command line.        |
+| `EPTHenOpt/`                  | The core Python package source code.                                               |
+| `EPTHenOpt/__init__.py`       | Defines the package's public API.                                                  |
+| `EPTHenOpt/hen_models.py`     | Contains the data models: `Stream`, `Utility`, `CostParameters`, and `HENProblem`. |
+| `EPTHenOpt/base_optimizer.py` | Base class for all optimizers, containing the shared fitness calculation logic.    |
+| `EPTHenOpt/ga_helpers.py`     | Implementation of the `GeneticAlgorithmHEN` optimizer.                             |
+| `EPTHenOpt/tlbo_helpers.py`   | Implementation of the `TeachingLearningBasedOptimizationHEN` optimizer.            |
+| `EPTHenOpt/cores.py`          | Manages parallel processing and inter-worker communication (migration).            |
+| `EPTHenOpt/utils.py`          | Utility functions for loading data, calculating LMTD, and displaying results.      |
+| `tests/`                      | Contains unit tests for the package components.                                    |
+| `*.csv`                       | Default input data files for streams, utilities, and match constraints.            |
+| `requirements.txt`            | A list of Python package dependencies.                                             |
+| `usage.txt`                   | A text file containing the full command-line help message.                         |
 
 ## Example Results
 
@@ -194,6 +200,7 @@ If you use EPTHenOpt in your research or work, please cite it as follows:
 ## Contributing
 
 Contributions are welcome! If you would like to contribute to the project, please follow these steps:
+
 1.  Fork the repository.
 2.  Create a new branch for your feature or bug fix (`git checkout -b feature/your-feature-name`).
 3.  Make your changes and commit them (`git commit -m 'Add some feature'`).
@@ -210,5 +217,6 @@ This project is licensed under the MIT License - see the [LICENSE.md](LICENSE.md
 
 This package was developed by:
 **Maetee Lorprajuksiri**
+
 -   **Email**: 26008353@pttgcgroup.com
 -   **Affiliation**: E-PT-PX Department, GC Maintenance and Engineering Co. Ltd.

@@ -188,7 +188,7 @@ def load_data_from_csv(streams_filepath, utilities_filepath, matches_U_filepath=
     return loaded_hot_streams, loaded_cold_streams, loaded_hot_utilities, loaded_cold_utilities, loaded_matches_U, loaded_forbidden_matches, loaded_required_matches
 
 
-# --- Moved from hen_synthesis_epoch.py ---
+# --- Moved from run_problem.py ---
 def display_optimization_results(all_run_results, hen_problem_instance, model_name):
     """
     Summarizes and displays the results from all optimization runs.
@@ -201,7 +201,9 @@ def display_optimization_results(all_run_results, hen_problem_instance, model_na
         model_name (str): The name of the optimization model used (e.g., 'GA', 'TLBO').
     """
     display_problem_summary(hen_problem_instance)
-    
+    print(f"Pinch Analysis (EMAT={hen_problem_instance.cost_params.EMAT}K): Q_H_min={hen_problem_instance.Q_H_min_pinch:.2f}kW, Q_C_min={hen_problem_instance.Q_C_min_pinch:.2f}kW")
+    if hen_problem_instance.T_pinch_hot_actual is not None: print(f"  T_Pinch_Hot={hen_problem_instance.T_pinch_hot_actual:.2f}K, T_Pinch_Cold={hen_problem_instance.T_pinch_cold_actual:.2f}K")
+
     print(f"--- Summary of Multiple {model_name} Runs ---")
     if not all_run_results:
         print("No results to summarize.")
@@ -384,7 +386,7 @@ def display_problem_summary(hen_problem):
     print("\n" + "="*50 + "\n")
 
 def display_help():
-    help_string = """usage: hen_synthesis_epoch.py [-h] [--streams_file STREAMS_FILE] [--utilities_file UTILITIES_FILE]
+    help_string = """usage: run_problem.py [-h] [--streams_file STREAMS_FILE] [--utilities_file UTILITIES_FILE]
                               [--matches_U_file MATCHES_U_FILE]
                               [--forbidden_matches_file FORBIDDEN_MATCHES_FILE]
                               [--required_matches_file REQUIRED_MATCHES_FILE]

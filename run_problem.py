@@ -1,11 +1,4 @@
-import numpy as np
-import copy
-import time
-from typing import Any, Tuple
-import random
-import multiprocessing
 import argparse
-import json
 import sys # ADDED: To check for command line arguments
 
 # Updated import to use the new package name EPTHenOpt
@@ -80,10 +73,31 @@ def main(args):
     
     hen_problem = HENProblem(hot_streams=hot_streams, cold_streams=cold_streams, hot_utility=hot_utilities, cold_utility=cold_utilities, cost_params=cost_params, num_stages=num_stages, matches_U_cost=loaded_matches_U, forbidden_matches=loaded_forbidden, required_matches=loaded_required)
 
-    display_problem_summary(hen_problem)
-    print(f"Pinch Analysis (EMAT={hen_problem.cost_params.EMAT}K): Q_H_min={hen_problem.Q_H_min_pinch:.2f}kW, Q_C_min={hen_problem.Q_C_min_pinch:.2f}kW")
-    if hen_problem.T_pinch_hot_actual is not None: print(f"  T_Pinch_Hot={hen_problem.T_pinch_hot_actual:.2f}K, T_Pinch_Cold={hen_problem.T_pinch_cold_actual:.2f}K")
+    # --- ADDED: Display Run Configuration ---
+    print("\n" + "="*50)
+    print("Optimization Run Configuration".center(50))
+    print("="*50)
+    print(f"  - Optimization Model: {args.model}")
+    print(f"  - Parallel Workers: {args.number_of_workers}")
+    print(f"  - Epochs: {args.epochs}")
+    print(f"  - Generations per Epoch: {args.generations_per_epoch}")
+    print(f"  - Total Generations: {args.epochs * args.generations_per_epoch}")
+    print(f"  - Population Size: {args.population_size}")
 
+    if args.model.upper() == 'GA':
+        print("\n  Genetic Algorithm (GA) Parameters:")
+        print(f"    - Crossover Probability: {args.ga_crossover_prob}")
+        print(f"    - Mutation Prob (Z): {args.ga_mutation_prob_Z_setting}")
+        print(f"    - Mutation Prob (R): {args.ga_mutation_prob_R_setting}")
+        print(f"    - Elitism Fraction: {args.ga_elitism_frac}")
+        print(f"    - Tournament Size: {args.ga_tournament_size}")
+    elif args.model.upper() == 'TLBO':
+        print("\n  Teaching-Learning-Based Optimization (TLBO) Parameters:")
+        tf_display = 'Random (1 or 2)' if args.tlbo_teaching_factor == 0 else str(args.tlbo_teaching_factor)
+        print(f"    - Teaching Factor (TF): {tf_display}")
+
+    print("="*50 + "\n")
+    
     common_opt_params = {"utility_cost_factor": args.utility_cost_factor, "pinch_deviation_penalty_factor": args.pinch_dev_penalty_factor, "sws_max_iter": args.sws_max_iter, "sws_conv_tol": args.sws_conv_tol}
     model_opt_specific_params = {}
     if args.model.upper() == 'GA': model_opt_specific_params = { "crossover_prob": args.ga_crossover_prob, "mutation_prob_Z": args.ga_mutation_prob_Z_setting, "mutation_prob_R": args.ga_mutation_prob_R_setting, "r_mutation_std_dev_factor": args.ga_r_mutation_std_dev_factor_setting, "elitism_count": int(args.ga_elitism_frac * args.population_size), "tournament_size": args.ga_tournament_size }
@@ -91,7 +105,7 @@ def main(args):
     
     total_gens = args.epochs * args.generations_per_epoch
     if args.number_of_workers <= 1:
-        print("\nRunning in sequential mode (1 worker)...")
+        print("Running in sequential mode (1 worker)...")
         solver_params = { **common_opt_params, **model_opt_specific_params, "initial_penalty": args.initial_penalty, "final_penalty": args.final_penalty, "generations": total_gens }
         solver = GeneticAlgorithmHEN(problem=hen_problem, population_size=args.population_size, **solver_params) if args.model.upper() == 'GA' else TeachingLearningBasedOptimizationHEN(problem=hen_problem, population_size=args.population_size, **solver_params)
         solver.run()

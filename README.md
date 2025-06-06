@@ -30,7 +30,7 @@ This package provides robust, easy-to-use implementations of two powerful metahe
 1.  **Clone the repository:**
 
     ```bash
-    git clone [https://github.com/your-username/EPTHenOpt.git](https://github.com/your-username/EPTHenOpt.git)
+    git clone [https://github.com/may3rd/EPTHenOpt.git](https://github.com/may3rd/EPTHenOpt.git)
     cd EPTHenOpt
     ```
 

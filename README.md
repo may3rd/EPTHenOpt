@@ -157,7 +157,7 @@ If you use EPTHenOpt in your research or work, please cite it as follows:
   title = {{EPTHenOpt: A Python Package for Heat Exchanger Network Synthesis and Optimization}},
   month = {6},
   year = {2025},
-  url = {[https://github.com/your-username/EPTHenOpt](https://github.com/your-username/EPTHenOpt)}
+  url = {[https://github.com/may3rd/EPTHenOpt](https://github.com/may3rd/EPTHenOpt)}
 }
 ```
 

@@ -14,9 +14,16 @@ with open("README.md", "r", encoding="utf-8") as fh:
 with open('requirements.txt') as f:
     requirements = f.read().splitlines()
 
+# --- ADDED: Define development dependencies ---
+dev_requirements = [
+    'sphinx',
+    'sphinx_rtd_theme', # A popular, clean theme for Sphinx
+    'pytest'
+]
+
 setup(
     name="EPTHenOpt",
-    version="0.3.0",  # Incremented version
+    version="0.7.0",  # Version bump
     author="Maetee Lorprajuksiri",
     author_email="26008353@pttgcgroup.com",
     description="A package for Heat Exchanger Network (HEN) Synthesis and Optimization.",
@@ -34,7 +41,10 @@ setup(
     ],
     python_requires='>=3.8',
     install_requires=requirements,
-    # This is the crucial part for the command-line interface
+    # --- ADDED: extras_require for development install ---
+    extras_require={
+        'dev': dev_requirements
+    },
     entry_points={
         'console_scripts': [
             'run_hen_problem=EPTHenOpt.run_problem:cli',

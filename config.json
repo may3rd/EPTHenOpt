@@ -1,0 +1,77 @@
+{
+    "file_paths": {
+        "streams_file": "streams.csv",
+        "utilities_file": "utilities.csv",
+        "matches_U_file": "matches_U_cost.csv",
+        "forbidden_matches_file": null,
+        "required_matches_file": null
+    },
+    "environmental_parameters": {
+        "objective": "single",
+        "default_co2_hot_utility": 0.2,
+        "default_co2_cold_utility": 0.05
+    },
+    "core_optimization": {
+        "model": "GA",
+        "population_size": 400,
+        "epochs": 20,
+        "generations_per_epoch": 20,
+        "number_of_workers": 4,
+        "num_stages": 0,
+        "verbose": false,
+        "output_dir": null
+    },
+    "problem_cost_parameters": {
+        "EMAT_setting": 3.0,
+        "default_U_overall": 0.8,
+        "exchanger": {
+            "fixed_cost": 0.0,
+            "area_coeff": 1000.0,
+            "area_exp": 0.6
+        },
+        "heater": {
+            "fixed_cost": 0.0,
+            "area_coeff": 1200.0,
+            "area_exp": 0.6
+        },
+        "cooler": {
+            "fixed_cost": 0.0,
+            "area_coeff": 1000.0,
+            "area_exp": 0.6
+        }
+    },
+    "ga_parameters": {
+        "ga_crossover_prob": 0.85,
+        "ga_mutation_prob_Z_setting": 0.1,
+        "ga_mutation_prob_R_setting": 0.1,
+        "ga_r_mutation_std_dev_factor_setting": 0.1,
+        "ga_elitism_frac": 0.1,
+        "ga_tournament_size": 3
+    },
+    "tlbo_parameters": {
+        "tlbo_teaching_factor": 0
+    },
+    "pso_parameters": {
+        "pso_inertia_weight": 0.5,
+        "pso_cognitive_coeff": 1.5,
+        "pso_social_coeff": 1.5
+    },
+    "sa_parameters": {
+        "sa_initial_temp": 10000.0,
+        "sa_final_temp": 0.1,
+        "sa_cooling_rate": 0.95
+    },
+    "aco_parameters": {
+        "aco_evaporation_rate": 0.1,
+        "aco_pheromone_influence": 1.0,
+        "aco_pheromone_deposit_amount": 100.0
+    },
+    "fitness_penalty_parameters": {
+        "utility_cost_factor": 1.0,
+        "pinch_dev_penalty_factor": 150.0,
+        "sws_max_iter": 300,
+        "sws_conv_tol": 1e-5,
+        "initial_penalty": 1000.0,
+        "final_penalty": 10000000.0
+    }
+}

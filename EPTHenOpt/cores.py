@@ -13,6 +13,9 @@ import queue
 # Import the specific optimizer classes that the worker will need to instantiate.
 from .ga_helpers import GeneticAlgorithmHEN
 from .tlbo_helpers import TeachingLearningBasedOptimizationHEN
+from .pso_helpers import ParticleSwarmOptimizationHEN
+from .sa_helpers import SimulatedAnnealingHEN
+from .aco_helpers import AntColonyOptimizationHEN
 
 def optimization_worker(
     worker_id, model_name, problem, population_size, epochs, generations_per_epoch,
@@ -28,13 +31,15 @@ def optimization_worker(
     solver = None
     try:
         if model_name.upper() == 'GA':
-            solver = GeneticAlgorithmHEN(
-                problem=problem, population_size=population_size,
-                random_seed=int(time.time()) + worker_id, **solver_params)
+            solver = GeneticAlgorithmHEN(problem=problem, population_size=population_size, random_seed=int(time.time()) + worker_id, **solver_params)
         elif model_name.upper() == 'TLBO':
-            solver = TeachingLearningBasedOptimizationHEN(
-                problem=problem, population_size=population_size,
-                random_seed=int(time.time()) + worker_id, **solver_params)
+            solver = TeachingLearningBasedOptimizationHEN(problem=problem, population_size=population_size, random_seed=int(time.time()) + worker_id, **solver_params)
+        elif model_name.upper() == 'PSO':
+            solver = ParticleSwarmOptimizationHEN(problem=problem, population_size=population_size, random_seed=int(time.time()) + worker_id, **solver_params)
+        elif model_name.upper() == 'SA':
+            solver = SimulatedAnnealingHEN(problem=problem, population_size=population_size, random_seed=int(time.time()) + worker_id, **solver_params)
+        elif model_name.upper() == 'ACO': # Add the new choice
+            solver = AntColonyOptimizationHEN(problem=problem, population_size=population_size, random_seed=int(time.time()) + worker_id, **solver_params)
         else:
             raise ValueError(f"Unknown model type: {model_name}")
 

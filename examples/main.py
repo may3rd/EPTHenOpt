@@ -7,7 +7,6 @@ if __name__ == "__main__":
         epochs=10,
         population_size=50,
         number_of_workers=4,
-        noverbose=True # Example of disabling verbose output
     )
 
     # You can also run a TLBO optimization

@@ -27,6 +27,8 @@ class BaseOptimizer:
                  final_penalty=1e7,
                  **kwargs):
 
+        self.verbose = kwargs.get('verbose', False)
+        
         self.problem: HENProblem = problem
         self.population_size = population_size
         self.generations = generations
@@ -289,6 +291,9 @@ class BaseOptimizer:
             Q_hot_CS_required[j_cold_idx] = max(0, cs.CP * (cs.Tout_target - cs.Tin) - Q_total_recovered_for_cs)
 
         # Utility assignment logic (coolers for hot streams)
+        annual_co2_cold_utility = 0
+        annual_co2_hot_utility = 0
+        
         if self.problem.cold_utility:
             for i_hot_util_loop in range(NH):
                 hs_util = self.problem.hot_streams[i_hot_util_loop]
@@ -296,13 +301,22 @@ class BaseOptimizer:
                 # Q_cooler_needed should be calculated based on remaining duty to reach target
                 Q_cooler_needed = hs_util.CP * (temp_before_cu - hs_util.Tout_target)
 
-
                 if Q_cooler_needed > 1e-6 and hs_util.CP > 1e-9:
                     best_cu_obj_for_this_need = None
                     min_incremental_cost_for_this_cooler = float('inf')
                     best_cooler_capital_cost = 0; best_cooler_op_cost_for_this_Q = 0; best_cooler_details = {}
 
                     for cu_candidate in self.problem.cold_utility:
+                        # --- ADDED: Check for forbidden utility match ---
+                        is_forbidden = False
+                        if self.problem.forbidden_matches:
+                            for forbidden in self.problem.forbidden_matches:
+                                if forbidden.get('hot') == hs_util.id and forbidden.get('cold') == cu_candidate.id:
+                                    is_forbidden = True
+                                    break
+                        if is_forbidden:
+                            continue # Skip this forbidden utility
+                        
                         Th_in_cu = temp_before_cu; Th_out_cu = hs_util.Tout_target
                         Tc_in_cu_u = cu_candidate.Tin
                         Tc_out_cu_u = cu_candidate.Tout if cu_candidate.Tout is not None and cu_candidate.Tout > Tc_in_cu_u else Tc_in_cu_u + 5 # Ensure positive delta T for utility
@@ -337,7 +351,8 @@ class BaseOptimizer:
                         capital_cost_coolers += best_cooler_capital_cost
                         annual_cold_utility_op_cost += best_cooler_op_cost_for_this_Q
                         exchanger_details_list.append(best_cooler_details)
-                        final_outlet_Th_after_utility[i_hot_util_loop] = hs_util.Tout_target 
+                        final_outlet_Th_after_utility[i_hot_util_loop] = hs_util.Tout_target
+                        annual_co2_cold_utility += Q_cooler_needed * best_cu_obj_for_this_need.co2_factor
                     elif Q_cooler_needed > 1e-6 : # If cooling was needed but no suitable utility found
                         penalty_unmet_targets += target_temp_penalty_factor * Q_cooler_needed
 
@@ -349,13 +364,22 @@ class BaseOptimizer:
                 # Q_heater_val should be calculated based on remaining duty
                 Q_heater_val = cs_util.CP * (cs_util.Tout_target - temp_before_hu)
 
-
                 if Q_heater_val > 1e-6 and cs_util.CP > 1e-9:
                     best_hu_obj_for_this_need = None
                     min_incremental_cost_for_this_heater = float('inf')
                     best_heater_capital_cost = 0; best_heater_op_cost_for_this_Q = 0; best_heater_details = {}
                     
                     for hu_candidate in self.problem.hot_utility:
+                        # --- ADDED: Check for forbidden utility match ---
+                        is_forbidden = False
+                        if self.problem.forbidden_matches:
+                            for forbidden in self.problem.forbidden_matches:
+                                if forbidden.get('hot') == hu_candidate.id and forbidden.get('cold') == cs_util.id:
+                                    is_forbidden = True
+                                    break
+                        if is_forbidden:
+                            continue # Skip this forbidden utility
+                        
                         Tc_in_hu_u = temp_before_hu; Tc_out_hu_u = cs_util.Tout_target
                         Th_in_hu_u = hu_candidate.Tin
                         Th_out_hu_u = hu_candidate.Tout if hu_candidate.Tout is not None and hu_candidate.Tout < Th_in_hu_u else Th_in_hu_u - 5 # Ensure positive delta T
@@ -392,6 +416,7 @@ class BaseOptimizer:
                         annual_hot_utility_op_cost += best_heater_op_cost_for_this_Q
                         exchanger_details_list.append(best_heater_details)
                         final_outlet_Tc_after_utility[j_cold_util_loop] = cs_util.Tout_target
+                        annual_co2_hot_utility += Q_heater_val * best_hu_obj_for_this_need.co2_factor
                     elif Q_heater_val > 1e-6: # If heating was needed but no suitable utility found
                          penalty_unmet_targets += target_temp_penalty_factor * Q_heater_val
         
@@ -446,7 +471,9 @@ class BaseOptimizer:
 
         TAC_for_GA = total_annual_capital_cost + (total_annual_operating_cost * self.utility_cost_factor) + penalties_sum
         true_TAC_report = total_annual_capital_cost + total_annual_operating_cost + sum(p for p in [penalty_EMAT, penalty_unmet_targets] if p > 0) # True TAC usually includes unavoidable penalties like EMAT violations
-
+        
+        total_co2 = annual_co2_hot_utility + annual_co2_cold_utility
+        
         detailed_costs = {
             "TAC_GA_optimizing": TAC_for_GA, "TAC_true_report": true_TAC_report,
             "capital_process_exchangers": capital_cost_process_exchangers, 
@@ -463,7 +490,8 @@ class BaseOptimizer:
             "penalty_required_matches": required_matches_penalty,
             "penalty_total_in_GA_TAC": penalties_sum,
             "Q_hot_consumed_kW_actual": Q_hot_consumed_kW_actual,
-            "Q_cold_consumed_kW_actual": Q_cold_consumed_kW_actual
+            "Q_cold_consumed_kW_actual": Q_cold_consumed_kW_actual,
+            "total_co2_emissions": total_co2,
         }
         return detailed_costs, exchanger_details_list
 

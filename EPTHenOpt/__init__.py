@@ -7,8 +7,9 @@ This package provides tools for modeling HEN problems and solving them using
 metaheuristic algorithms like Genetic Algorithm (GA) and Teaching-Learning-Based
 Optimization (TLBO).
 """
-import argparse
+import json
 from types import SimpleNamespace
+from pathlib import Path
 
 # Import key classes from data model modules
 from .hen_models import (
@@ -18,6 +19,10 @@ from .hen_models import (
 # Import the main optimizer classes from their respective algorithm modules
 from .ga_helpers import GeneticAlgorithmHEN
 from .tlbo_helpers import TeachingLearningBasedOptimizationHEN
+from .pso_helpers import ParticleSwarmOptimizationHEN
+from .sa_helpers import SimulatedAnnealingHEN
+from .aco_helpers import AntColonyOptimizationHEN
+from .nsga2_helpers import NSGAIIHEN
 
 # Import the base optimizer class for users who might want to extend the package
 from .base_optimizer import BaseOptimizer
@@ -35,7 +40,6 @@ from .utils import (
 # Import the core parallel execution function
 from .cores import run_parallel_with_migration
 
-
 # Define the public API of the package using __all__.
 __all__ = [
     # Models
@@ -43,6 +47,8 @@ __all__ = [
 
     # Optimizers
     'GeneticAlgorithmHEN', 'TeachingLearningBasedOptimizationHEN',
+    'ParticleSwarmOptimizationHEN', 'SimulatedAnnealingHEN',
+    'AntColonyOptimizationHEN','NSGAIIHEN',
 
     # Base Class
     'BaseOptimizer',
@@ -55,61 +61,37 @@ __all__ = [
     'run_parallel_with_migration', 'run'
 ]
 
-__version__ = "0.3.0"
+__version__ = "0.7.0" # Version bump for new feature
 __author__ = "Maetee Lorprajuksiri (26008353@pttgcgroup.com) E-PT-PX Department, GC Maintenance and Engineering Co. Ltd."
 
-def run(**kwargs):
+def run(config_file='config.json', **kwargs):
     """
     High-level programmatic API to run a HEN optimization.
 
     This function provides a simple way to configure and run an optimization
-    by passing parameters as keyword arguments.
+    by passing parameters as keyword arguments or via a config file.
 
     Args:
-        **kwargs: Keyword arguments corresponding to the command-line options
-                  in run_problem.py. For example:
-                  model='GA', epochs=10, population_size=200, etc.
+        config_file (str, optional): Path to the JSON configuration file.
+                                     Defaults to 'config.json'.
+        **kwargs: Keyword arguments corresponding to the command-line options.
+                  These will override any values from the config file.
     """
-    # Import inside the function to avoid circular dependencies at package import time.
+    # Import inside the function to avoid circular dependencies
     from .run_problem import main as run_problem_main
 
-    # Create a SimpleNamespace object to mimic the args object from argparse
-    # This allows us to reuse the existing main logic from run_problem.py
-    # Set default values for all possible arguments
-    defaults = {
-        'streams_file': "streams.csv",
-        'utilities_file': "utilities.csv",
-        'matches_U_file': None,
-        'forbidden_matches_file': None,
-        'required_matches_file': None,
-        'model': 'GA',
-        'population_size': 200,
-        'epochs': 10,
-        'generations_per_epoch': 20,
-        'number_of_workers': 1,
-        'num_stages': 0,
-        'noverbose': False,
-        'EMAT_setting': 3.0,
-        'default_U_overall': 0.5,
-        'default_exch_fixed_cost': 0.0,
-        'default_exch_area_coeff': 1000.0,
-        'default_exch_area_exp': 0.6,
-        'ga_crossover_prob': 0.85,
-        'ga_mutation_prob_Z_setting': 0.1,
-        'ga_mutation_prob_R_setting': 0.1,
-        'ga_r_mutation_std_dev_factor_setting': 0.1,
-        'ga_elitism_frac': 0.1,
-        'ga_tournament_size': 3,
-        'tlbo_teaching_factor': 0,
-        'utility_cost_factor': 1.0,
-        'pinch_dev_penalty_factor': 150.0,
-        'sws_max_iter': 300,
-        'sws_conv_tol': 1e-5,
-        'initial_penalty': 1e3,
-        'final_penalty': 1e7
-    }
+    # Load defaults from the config file if it exists
+    defaults = {}
+    config_path = Path(config_file)
+    if config_path.is_file():
+        with open(config_path, 'r') as f:
+            config_data = json.load(f)
+            for section, params in config_data.items():
+                defaults.update(params)
+    else:
+        print(f"Warning: Config file '{config_file}' not found. Using internal defaults.")
 
-    # Update defaults with user-provided kwargs
+    # Update defaults with any user-provided keyword arguments
     defaults.update(kwargs)
     args = SimpleNamespace(**defaults)
 

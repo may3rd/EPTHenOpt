@@ -198,6 +198,12 @@ class GeneticAlgorithmHEN(BaseOptimizer):
             self.population.append(self._create_random_full_chromosome())
         if len(self.population) > self.population_size:
             self.population = self.population[:self.population_size]
+        
+        if self.verbose:
+            print_prefix = f"Run {run_id_for_print} - PSO - " if run_id_for_print else "PSO - "
+            overall_best_true_str = f"{self.best_costs_overall_dict['TAC_true_report']:.2f}" if self.best_costs_overall_dict.get('TAC_true_report') != float('inf') else "Inf"
+            print(f"{print_prefix}Gen {gen_num+1:03d} | Best True TAC (Overall): {overall_best_true_str} | PSO Obj: {self.gbest_fitness:.2f}")
+
 
 
     def inject_chromosome(self, chromosome):

@@ -167,6 +167,11 @@ class TeachingLearningBasedOptimizationHEN(BaseOptimizer):
                 self.best_costs_overall_dict = copy.deepcopy(self.fitnesses[best_idx_this_gen])
                 self.best_chromosome_overall = self.population[best_idx_this_gen].copy()
                 self.best_details_overall = copy.deepcopy(self.details_list[best_idx_this_gen])
+    
+        if self.verbose:
+            print_prefix = f"Run {run_id_for_print} - PSO - " if run_id_for_print else "PSO - "
+            overall_best_true_str = f"{self.best_costs_overall_dict['TAC_true_report']:.2f}" if self.best_costs_overall_dict.get('TAC_true_report') != float('inf') else "Inf"
+            print(f"{print_prefix}Gen {gen_num+1:03d} | Best True TAC (Overall): {overall_best_true_str} | PSO Obj: {self.gbest_fitness:.2f}")
 
     def inject_chromosome(self, chromosome):
         """Injects an external chromosome into the population, replacing the worst member."""

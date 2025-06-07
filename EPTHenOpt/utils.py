@@ -11,13 +11,26 @@ import csv
 import math
 import numpy as np # Added for np.argwhere
 import copy      # Added for copy.deepcopy
+from pathlib import Path
+import json
 
 MIN_LMTD = 1e-6
 
 def calculate_lmtd(Th_in, Th_out, Tc_in, Tc_out):
-    """
-    Return the log mean temperature difference of the process.
-    This version includes robust checks to prevent runtime warnings.
+    """Calculates the Log Mean Temperature Difference (LMTD).
+
+    This function includes robust checks for temperature crosses and
+    avoids division-by-zero errors when temperature differences are equal.
+
+    Args:
+        Th_in (float): Inlet temperature of the hot stream.
+        Th_out (float): Outlet temperature of the hot stream.
+        Tc_in (float): Inlet temperature of the cold stream.
+        Tc_out (float): Outlet temperature of the cold stream.
+
+    Returns:
+        float: The calculated LMTD value, or a minimum value (MIN_LMTD)
+               if the temperature profile is invalid.
     """
     delta_T1 = Th_in - Tc_out
     delta_T2 = Th_out - Tc_in
@@ -196,8 +209,146 @@ def load_data_from_csv(streams_filepath, utilities_filepath, matches_U_filepath=
     return loaded_hot_streams, loaded_cold_streams, loaded_hot_utilities, loaded_cold_utilities, loaded_matches_U, loaded_forbidden_matches, loaded_required_matches
 
 
-# --- Moved from run_problem.py ---
-def display_optimization_results(all_run_results, hen_problem_instance, model_name):
+def export_results(results_data, hen_problem, output_dir):
+    """
+    Exports the optimization results to structured files (JSON and CSV).
+
+    Args:
+        results_data (dict): The dictionary containing the best run's results.
+        hen_problem (HENProblem): The HEN problem instance.
+        output_dir (str): The directory where files will be saved.
+    """
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    print(f"\nExporting results to directory: {output_path.resolve()}")
+
+    # --- 1. Export Summary Costs to JSON ---
+    summary_costs = results_data.get('costs', {})
+    summary_path = output_path / 'summary.json'
+    with open(summary_path, 'w') as f:
+        json.dump(summary_costs, f, indent=4)
+    print(f"  - Saved summary.json")
+
+    details = results_data.get('details', [])
+    if not details:
+        print("  - No detailed structure to export.")
+        return
+
+    # --- 2. Export Network Structure to CSV ---
+    structure_path = output_path / 'network_structure.csv'
+    structure_headers = [
+        "Unit_Type", "Hot_Stream", "Cold_Stream", "Stage", "Heat_Duty_kW",
+        "Area_m2", "LMTD_K", "Hot_In_K", "Hot_Out_K", "Cold_In_K", "Cold_Out_K"
+    ]
+    structure_rows = []
+    final_stream_temps = {stream.id: stream.Tin for stream in hen_problem.hot_streams + hen_problem.cold_streams}
+
+    for detail in details:
+        row = {}
+        if detail.get('type') == 'heater':
+            row['Unit_Type'] = 'Heater'
+            cold_stream = hen_problem.cold_streams[detail['C_idx']]
+            row['Hot_Stream'] = detail.get('Util_ID', 'N/A')
+            row['Cold_Stream'] = cold_stream.id
+            row['Heat_Duty_kW'] = detail.get('Q', 0)
+            row['Area_m2'] = detail.get('Area', 0)
+            row['Hot_In_K'] = detail.get('util_Tin', 0)
+            row['Hot_Out_K'] = detail.get('util_Tout', 0)
+            row['Cold_In_K'] = detail.get('Tc_in', 0)
+            row['Cold_Out_K'] = detail.get('Tc_out', 0)
+            row['LMTD_K'] = calculate_lmtd(row['Hot_In_K'], row['Hot_Out_K'], row['Cold_In_K'], row['Cold_Out_K'])
+            final_stream_temps[cold_stream.id] = row['Cold_Out_K']
+        elif detail.get('type') == 'cooler':
+            row['Unit_Type'] = 'Cooler'
+            hot_stream = hen_problem.hot_streams[detail['H_idx']]
+            row['Hot_Stream'] = hot_stream.id
+            row['Cold_Stream'] = detail.get('Util_ID', 'N/A')
+            row['Heat_Duty_kW'] = detail.get('Q', 0)
+            row['Area_m2'] = detail.get('Area', 0)
+            row['Hot_In_K'] = detail.get('Th_in', 0)
+            row['Hot_Out_K'] = detail.get('Th_out', 0)
+            row['Cold_In_K'] = detail.get('util_Tin', 0)
+            row['Cold_Out_K'] = detail.get('util_Tout', 0)
+            row['LMTD_K'] = calculate_lmtd(row['Hot_In_K'], row['Hot_Out_K'], row['Cold_In_K'], row['Cold_Out_K'])
+            final_stream_temps[hot_stream.id] = row['Hot_Out_K']
+        else: # Process Exchanger
+            row['Unit_Type'] = 'Process_Exchanger'
+            row['Hot_Stream'] = hen_problem.hot_streams[detail['H']].id
+            row['Cold_Stream'] = hen_problem.cold_streams[detail['C']].id
+            row['Stage'] = detail.get('k', -1) + 1
+            row['Heat_Duty_kW'] = detail.get('Q', 0)
+            row['Area_m2'] = detail.get('Area', 0)
+            row['Hot_In_K'] = detail.get('Th_in', 0)
+            row['Hot_Out_K'] = detail.get('Th_out', 0)
+            row['Cold_In_K'] = detail.get('Tc_in', 0)
+            row['Cold_Out_K'] = detail.get('Tc_out', 0)
+            row['LMTD_K'] = calculate_lmtd(row['Hot_In_K'], row['Hot_Out_K'], row['Cold_In_K'], row['Cold_Out_K'])
+
+        structure_rows.append(row)
+
+    with open(structure_path, 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=structure_headers)
+        writer.writeheader()
+        writer.writerows(structure_rows)
+    print(f"  - Saved network_structure.csv")
+
+    # --- 3. Export Final Stream States to CSV ---
+    stream_results_path = output_path / 'stream_results.csv'
+    stream_headers = [
+        "Stream_ID", "Stream_Type", "Initial_Tin_K", "Target_Tout_K",
+        "Final_Tout_K", "Is_Target_Met"
+    ]
+    stream_rows = []
+    all_streams = hen_problem.hot_streams + hen_problem.cold_streams
+    for stream in all_streams:
+        final_temp = final_stream_temps.get(stream.id, stream.Tin) # Default to Tin if not in any unit
+        is_met = abs(final_temp - stream.Tout_target) < 0.1 # Tolerance for meeting target
+        stream_rows.append({
+            "Stream_ID": stream.id,
+            "Stream_Type": stream.type,
+            "Initial_Tin_K": stream.Tin,
+            "Target_Tout_K": stream.Tout_target,
+            "Final_Tout_K": final_temp,
+            "Is_Target_Met": is_met
+        })
+
+    with open(stream_results_path, 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=stream_headers)
+        writer.writeheader()
+        writer.writerows(stream_rows)
+    print(f"  - Saved stream_results.csv")
+
+def export_multi_objective_results(pareto_front, output_dir):
+    """Exports the Pareto front to a CSV file."""
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    pareto_path = output_path / 'pareto_front_results.csv'
+    
+    headers = [
+        "Solution_ID", "TAC_true_report", "Total_CO2_Emissions_kg_per_hr", 
+        "Total_Capital_Cost", "Total_Operating_Cost", "Hot_Utility_kW", "Cold_Utility_kW"
+    ]
+    
+    rows = []
+    for i, solution in enumerate(pareto_front):
+        costs = solution['costs']
+        rows.append({
+            "Solution_ID": i + 1,
+            "TAC_true_report": costs.get('TAC_true_report'),
+            "Total_CO2_Emissions_kg_per_hr": costs.get('total_co2_emissions'),
+            "Total_Capital_Cost": costs.get('total_capital_cost'),
+            "Total_Operating_Cost": costs.get('total_operating_cost'),
+            "Hot_Utility_kW": costs.get('Q_hot_consumed_kW_actual'),
+            "Cold_Utility_kW": costs.get('Q_cold_consumed_kW_actual'),
+        })
+        
+    with open(pareto_path, 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=headers)
+        writer.writeheader()
+        writer.writerows(rows)
+    print(f"\nExported Pareto front solutions to: {pareto_path.resolve()}")
+
+def display_optimization_results(all_run_results, hen_problem_instance, model_name, output_dir=None, objective='single'):
     """
     Summarizes and displays the results from all optimization runs.
     Args:
@@ -208,156 +359,166 @@ def display_optimization_results(all_run_results, hen_problem_instance, model_na
                                           Needed to decode chromosomes and access stream names.
         model_name (str): The name of the optimization model used (e.g., 'GA', 'TLBO').
     """
-    display_problem_summary(hen_problem_instance)
-    print(f"Pinch Analysis (EMAT={hen_problem_instance.cost_params.EMAT}K): Q_H_min={hen_problem_instance.Q_H_min_pinch:.2f}kW, Q_C_min={hen_problem_instance.Q_C_min_pinch:.2f}kW")
-    if hen_problem_instance.T_pinch_hot_actual is not None: print(f"  T_Pinch_Hot={hen_problem_instance.T_pinch_hot_actual:.2f}K, T_Pinch_Cold={hen_problem_instance.T_pinch_cold_actual:.2f}K")
-
-    print(f"--- Summary of Multiple {model_name} Runs ---")
-    if not all_run_results:
-        print("No results to summarize.")
-        return
-
-    best_overall_objective_val = float('inf') # Use a generic term, as it's model's objective
-    best_run_final_info = None   
-    
-    for run_result in all_run_results:
-        if not run_result or 'costs' not in run_result or run_result['costs'] is None:
-            print(f"Skipping invalid run result: {run_result}")
-            continue
-
-        # The key used for optimization (e.g., 'TAC_GA_optimizing' or a similar objective for TLBO)
-        objective_val = run_result['costs'].get('TAC_GA_optimizing', float('inf')) 
-        true_tac_for_display = run_result['costs'].get('TAC_true_report', float('inf'))
-
-        objective_val_str = f"{objective_val:.2f}" if objective_val != float('inf') else "Inf"
-        true_tac_str = f"{true_tac_for_display:.2f}" if true_tac_for_display != float('inf') else "Inf"
-        
-        print(f"Run with Seed {run_result.get('seed', 'N/A')}: True TAC = {true_tac_str} (Optimized Obj. = {objective_val_str})")
-        
-        if objective_val < best_overall_objective_val : 
-            best_overall_objective_val = objective_val
-            best_run_final_info = copy.deepcopy(run_result)
-
-    if best_run_final_info and 'costs' in best_run_final_info and \
-       best_run_final_info['costs'] is not None and \
-       best_run_final_info['costs'].get('TAC_GA_optimizing', float('inf')) != float('inf'): # Check against the optimizing TAC
-        
-        overall_best_true_tac_val = best_run_final_info['costs'].get('TAC_true_report', float('inf'))
-        # overall_best_ga_tac_val = best_run_final_info['costs'].get('TAC_GA_optimizing', float('inf')) # Already have this in best_overall_objective_val
-
-        true_tac_overall_str = f"{overall_best_true_tac_val:.2f}" if overall_best_true_tac_val != float('inf') else "Inf"
-        optimized_obj_overall_str = f"{best_overall_objective_val:.2f}" if best_overall_objective_val != float('inf') else "Inf"
-
-        print(f"\nBest True TAC found across all runs (corresponding to best Optimized Objective): {true_tac_overall_str}")
-        print(f"  (This solution had an Optimized Objective of: {optimized_obj_overall_str})")
-        print(f"  Best solution from Seed: {best_run_final_info.get('seed', 'N/A')}")
-        
-        costs_to_print = best_run_final_info['costs']
-        print("\nCost Breakdown for the Best Overall Solution:")
-        print(f"  True TAC: {costs_to_print.get('TAC_true_report', 0):.2f}, Optimized Obj.: {costs_to_print.get('TAC_GA_optimizing',0):.2f}")
-        print(f"  CapEx (Process Ex.): {costs_to_print.get('capital_process_exchangers',0):.2f}")
-        print(f"  CapEx (Heaters): {costs_to_print.get('capital_heaters',0):.2f}")
-        print(f"  CapEx (Coolers): {costs_to_print.get('capital_coolers',0):.2f}")
-        print(f"  OpEx (Hot Utility): {costs_to_print.get('op_cost_hot_utility',0):.2f}")
-        print(f"  OpEx (Cold Utility): {costs_to_print.get('op_cost_cold_utility',0):.2f}")
-        
-        penalty_keys = [k for k in costs_to_print if "penalty" in k.lower() and costs_to_print.get(k, 0) > 1e-6]
-        if penalty_keys:
-            print("  Penalties Applied (in Optimized Objective):")
-            for pk in penalty_keys:
-                 print(f"    {pk.replace('_', ' ').title()}: {costs_to_print[pk]:.2f}")
-        else:
-            print("  No significant penalties applied in the optimized objective for the best solution.")
-
-
-        print("\nStructure of the Best Overall Solution:")
-        full_chromosome_best = best_run_final_info.get('chromosome')
-        details_overall = best_run_final_info.get('details')
-
-        if full_chromosome_best is not None and details_overall is not None and hen_problem_instance:
-            Z_overall_best, _, _ = hen_problem_instance._decode_chromosome(full_chromosome_best)
-            
-            if Z_overall_best is not None:
-                active_matches = np.argwhere(Z_overall_best == 1)
-                if active_matches.size == 0:
-                    print("  No active process-process matches found in the best solution.")
-            
-            total_Q_recovered, total_area_process_exch = 0.0, 0.0
-            Q_hot_util_op_val, Q_cold_util_op_val = 0.0, 0.0
-            
-            print("\n  Process Heat Exchangers:")
-            process_exchangers_count = 0
-            for detail in details_overall:
-                if 'H' in detail and 'C' in detail and 'type' not in detail: # Process Exchanger
-                    hot_stream_obj = hen_problem_instance.hot_streams[detail['H']]
-                    cold_stream_obj = hen_problem_instance.cold_streams[detail['C']]
-                    hot_name = hot_stream_obj.id
-                    cold_name = cold_stream_obj.id
-                    
-                    Q_val = detail.get('Q',0.0)
-                    Th_in_val = detail.get('Th_in',0.0)
-                    Th_out_val = detail.get('Th_out',0.0)
-                    Tc_in_val = detail.get('Tc_in',0.0)
-                    Tc_out_val = detail.get('Tc_out',0.0)
-                    Area_val = detail.get('Area',0.0)
-
-                    if Q_val < 1e-6: continue 
-
-                    hot_CFp, cold_CFp = 0.0, 0.0
-                    hot_Split_ratio, cold_Split_ratio = 0.0, 0.0
-
-                    if abs(Th_in_val - Th_out_val) > 1e-6: hot_CFp = Q_val / abs(Th_in_val - Th_out_val)
-                    if hot_stream_obj.CP > 1e-6: hot_Split_ratio = hot_CFp / hot_stream_obj.CP
-                    
-                    if abs(Tc_in_val - Tc_out_val) > 1e-6: cold_CFp = Q_val / abs(Tc_in_val - Tc_out_val)
-                    if cold_stream_obj.CP > 1e-6: cold_Split_ratio = cold_CFp / cold_stream_obj.CP
-
-                    print(f"  {process_exchangers_count+1:2d}  {hot_name}-{cold_name} (Stage {detail.get('k',0)+1}): Q={Q_val:.2f} kW, Area={Area_val:.2f} m^2")
-                    print(f"      {hot_name}: FlowCp_branch={hot_CFp:.2f} (SplitFrac={hot_Split_ratio:.3f}), Tin={Th_in_val:.1f} K, Tout={Th_out_val:.1f} K")
-                    print(f"      {cold_name}: FlowCp_branch={cold_CFp:.2f} (SplitFrac={cold_Split_ratio:.3f}), Tin={Tc_in_val:.1f} K, Tout={Tc_out_val:.1f} K\n")
-                    
-                    process_exchangers_count += 1
-                    total_Q_recovered += Q_val
-                    total_area_process_exch += Area_val
-            if process_exchangers_count == 0:
-                print("    None.")
-                
-            print(f"  Total process exchangers: {process_exchangers_count}")
-            print(f"  Total Q Recovered (Process Exchangers): {total_Q_recovered:.2f} kW")
-            print(f"  Total Area (Process Exchangers): {total_area_process_exch:.2f} m^2")
-            
-            print("\n  Utility Units:")
-            heaters_count, coolers_count = 0, 0
-            for detail in details_overall:
-                if detail.get('type') == 'heater':
-                    heaters_count += 1
-                    cold_stream_obj = hen_problem_instance.cold_streams[detail['C_idx']]
-                    print(f"     {heaters_count:2d} Heater for {cold_stream_obj.id}: Q={detail.get('Q',0):.2f} kW, Area={detail.get('Area',0):.2f} m^2, Tc_in={detail.get('Tc_in',0):.1f} K, Tc_out={detail.get('Tc_out',0):.1f} K")
-                    Q_hot_util_op_val += detail.get('Q',0)
-            if heaters_count == 0:
-                print("    No Heaters.")
-
-            for detail in details_overall:
-                if detail.get('type') == 'cooler':
-                    coolers_count += 1
-                    hot_stream_obj = hen_problem_instance.hot_streams[detail['H_idx']]
-                    print(f"   {coolers_count:2d} Cooler for {hot_stream_obj.id}: Q={detail.get('Q',0):.2f} kW, Area={detail.get('Area',0):.2f} m^2, Th_in={detail.get('Th_in',0):.1f} K, Th_out={detail.get('Th_out',0):.1f} K")
-                    Q_cold_util_op_val += detail.get('Q',0)
-            if coolers_count == 0:
-                print("    No Coolers.")
-            
-            if Q_hot_util_op_val > 1e-6 or Q_cold_util_op_val > 1e-6:
-                print(f"\n  Utility Duty Summary:")
-                if Q_cold_util_op_val > 1e-6: print(f"    Total Cold Utility {coolers_count} Exchanger{'s' if coolers_count > 1 else ''}:, total duty: {Q_cold_util_op_val:.2f} kW")
-                else: print(f"    No Cold Utility required.")    
-                if Q_hot_util_op_val > 1e-6: print(f"    Total Hot Utility: {heaters_count} Exchanger{'s' if coolers_count > 1 else ''}, total duty: {Q_hot_util_op_val:.2f} kW")
-                else: print(f"    No Hot Utility required.")
-            else:
-                print(f"\n  Neither Hot or Cold Utility Required by the best solution.")
-        else:
-            print("  Best solution chromosome, details, or HEN problem instance are missing. Cannot print detailed structure.")
+    if objective == 'multi':
+        print(f"\n--- Pareto Front Summary for NSGA-II ---")
+        print(f"Found {len(all_run_results)} optimal trade-off solutions.")
+        if output_dir:
+            export_multi_objective_results(all_run_results, output_dir)
     else:
-        print(f"\nNo valid (finite optimized objective) best solution found across all runs for {model_name}.")
+        display_problem_summary(hen_problem_instance)
+        print(f"Pinch Analysis (EMAT={hen_problem_instance.cost_params.EMAT}K): Q_H_min={hen_problem_instance.Q_H_min_pinch:.2f}kW, Q_C_min={hen_problem_instance.Q_C_min_pinch:.2f}kW")
+        if hen_problem_instance.T_pinch_hot_actual is not None: print(f"  T_Pinch_Hot={hen_problem_instance.T_pinch_hot_actual:.2f}K, T_Pinch_Cold={hen_problem_instance.T_pinch_cold_actual:.2f}K")
+
+        print(f"--- Summary of Multiple {model_name} Runs ---")
+        if not all_run_results:
+            print("No results to summarize.")
+            return
+
+        best_overall_objective_val = float('inf') # Use a generic term, as it's model's objective
+        best_run_final_info = None   
+        
+        for run_result in all_run_results:
+            if not run_result or 'costs' not in run_result or run_result['costs'] is None:
+                print(f"Skipping invalid run result: {run_result}")
+                continue
+
+            # The key used for optimization (e.g., 'TAC_GA_optimizing' or a similar objective for TLBO)
+            objective_val = run_result['costs'].get('TAC_GA_optimizing', float('inf')) 
+            true_tac_for_display = run_result['costs'].get('TAC_true_report', float('inf'))
+
+            objective_val_str = f"{objective_val:.2f}" if objective_val != float('inf') else "Inf"
+            true_tac_str = f"{true_tac_for_display:.2f}" if true_tac_for_display != float('inf') else "Inf"
+            
+            print(f"Run with Seed {run_result.get('seed', 'N/A')}: True TAC = {true_tac_str} (Optimized Obj. = {objective_val_str})")
+            
+            if objective_val < best_overall_objective_val : 
+                best_overall_objective_val = objective_val
+                best_run_final_info = copy.deepcopy(run_result)
+
+        if best_run_final_info and 'costs' in best_run_final_info and \
+        best_run_final_info['costs'] is not None and \
+        best_run_final_info['costs'].get('TAC_GA_optimizing', float('inf')) != float('inf'): # Check against the optimizing TAC
+            
+            overall_best_true_tac_val = best_run_final_info['costs'].get('TAC_true_report', float('inf'))
+            # overall_best_ga_tac_val = best_run_final_info['costs'].get('TAC_GA_optimizing', float('inf')) # Already have this in best_overall_objective_val
+
+            true_tac_overall_str = f"{overall_best_true_tac_val:.2f}" if overall_best_true_tac_val != float('inf') else "Inf"
+            optimized_obj_overall_str = f"{best_overall_objective_val:.2f}" if best_overall_objective_val != float('inf') else "Inf"
+
+            print(f"\nBest True TAC found across all runs (corresponding to best Optimized Objective): {true_tac_overall_str}")
+            print(f"  (This solution had an Optimized Objective of: {optimized_obj_overall_str})")
+            print(f"  Best solution from Seed: {best_run_final_info.get('seed', 'N/A')}")
+            
+            costs_to_print = best_run_final_info['costs']
+            print("\nCost Breakdown for the Best Overall Solution:")
+            print(f"  True TAC: {costs_to_print.get('TAC_true_report', 0):.2f}, Optimized Obj.: {costs_to_print.get('TAC_GA_optimizing',0):.2f}")
+            print(f"  CapEx (Process Ex.): {costs_to_print.get('capital_process_exchangers',0):.2f}")
+            print(f"  CapEx (Heaters): {costs_to_print.get('capital_heaters',0):.2f}")
+            print(f"  CapEx (Coolers): {costs_to_print.get('capital_coolers',0):.2f}")
+            print(f"  OpEx (Hot Utility): {costs_to_print.get('op_cost_hot_utility',0):.2f}")
+            print(f"  OpEx (Cold Utility): {costs_to_print.get('op_cost_cold_utility',0):.2f}")
+            
+            penalty_keys = [k for k in costs_to_print if "penalty" in k.lower() and costs_to_print.get(k, 0) > 1e-6]
+            if penalty_keys:
+                print("  Penalties Applied (in Optimized Objective):")
+                for pk in penalty_keys:
+                    print(f"    {pk.replace('_', ' ').title()}: {costs_to_print[pk]:.2f}")
+            else:
+                print("  No significant penalties applied in the optimized objective for the best solution.")
+
+
+            print("\nStructure of the Best Overall Solution:")
+            full_chromosome_best = best_run_final_info.get('chromosome')
+            details_overall = best_run_final_info.get('details')
+
+            if full_chromosome_best is not None and details_overall is not None and hen_problem_instance:
+                Z_overall_best, _, _ = hen_problem_instance._decode_chromosome(full_chromosome_best)
+                
+                if Z_overall_best is not None:
+                    active_matches = np.argwhere(Z_overall_best == 1)
+                    if active_matches.size == 0:
+                        print("  No active process-process matches found in the best solution.")
+                
+                total_Q_recovered, total_area_process_exch = 0.0, 0.0
+                Q_hot_util_op_val, Q_cold_util_op_val = 0.0, 0.0
+                
+                print("\n  Process Heat Exchangers:")
+                process_exchangers_count = 0
+                for detail in details_overall:
+                    if 'H' in detail and 'C' in detail and 'type' not in detail: # Process Exchanger
+                        hot_stream_obj = hen_problem_instance.hot_streams[detail['H']]
+                        cold_stream_obj = hen_problem_instance.cold_streams[detail['C']]
+                        hot_name = hot_stream_obj.id
+                        cold_name = cold_stream_obj.id
+                        
+                        Q_val = detail.get('Q',0.0)
+                        Th_in_val = detail.get('Th_in',0.0)
+                        Th_out_val = detail.get('Th_out',0.0)
+                        Tc_in_val = detail.get('Tc_in',0.0)
+                        Tc_out_val = detail.get('Tc_out',0.0)
+                        Area_val = detail.get('Area',0.0)
+
+                        if Q_val < 1e-6: continue 
+
+                        hot_CFp, cold_CFp = 0.0, 0.0
+                        hot_Split_ratio, cold_Split_ratio = 0.0, 0.0
+
+                        if abs(Th_in_val - Th_out_val) > 1e-6: hot_CFp = Q_val / abs(Th_in_val - Th_out_val)
+                        if hot_stream_obj.CP > 1e-6: hot_Split_ratio = hot_CFp / hot_stream_obj.CP
+                        
+                        if abs(Tc_in_val - Tc_out_val) > 1e-6: cold_CFp = Q_val / abs(Tc_in_val - Tc_out_val)
+                        if cold_stream_obj.CP > 1e-6: cold_Split_ratio = cold_CFp / cold_stream_obj.CP
+
+                        print(f"  {process_exchangers_count+1:2d}  {hot_name}-{cold_name} (Stage {detail.get('k',0)+1}): Q={Q_val:.2f} kW, Area={Area_val:.2f} m^2")
+                        print(f"      {hot_name}: FlowCp_branch={hot_CFp:.2f} (SplitFrac={hot_Split_ratio:.3f}), Tin={Th_in_val:.1f} K, Tout={Th_out_val:.1f} K")
+                        print(f"      {cold_name}: FlowCp_branch={cold_CFp:.2f} (SplitFrac={cold_Split_ratio:.3f}), Tin={Tc_in_val:.1f} K, Tout={Tc_out_val:.1f} K\n")
+                        
+                        process_exchangers_count += 1
+                        total_Q_recovered += Q_val
+                        total_area_process_exch += Area_val
+                if process_exchangers_count == 0:
+                    print("    None.")
+                    
+                print(f"  Total process exchangers: {process_exchangers_count}")
+                print(f"  Total Q Recovered (Process Exchangers): {total_Q_recovered:.2f} kW")
+                print(f"  Total Area (Process Exchangers): {total_area_process_exch:.2f} m^2")
+                
+                print("\n  Utility Units:")
+                heaters_count, coolers_count = 0, 0
+                for detail in details_overall:
+                    if detail.get('type') == 'heater':
+                        heaters_count += 1
+                        cold_stream_obj = hen_problem_instance.cold_streams[detail['C_idx']]
+                        print(f"     {heaters_count:2d} Heater for {cold_stream_obj.id}: Q={detail.get('Q',0):.2f} kW, Area={detail.get('Area',0):.2f} m^2, Tc_in={detail.get('Tc_in',0):.1f} K, Tc_out={detail.get('Tc_out',0):.1f} K")
+                        Q_hot_util_op_val += detail.get('Q',0)
+                if heaters_count == 0:
+                    print("    No Heaters.")
+
+                for detail in details_overall:
+                    if detail.get('type') == 'cooler':
+                        coolers_count += 1
+                        hot_stream_obj = hen_problem_instance.hot_streams[detail['H_idx']]
+                        print(f"   {coolers_count:2d} Cooler for {hot_stream_obj.id}: Q={detail.get('Q',0):.2f} kW, Area={detail.get('Area',0):.2f} m^2, Th_in={detail.get('Th_in',0):.1f} K, Th_out={detail.get('Th_out',0):.1f} K")
+                        Q_cold_util_op_val += detail.get('Q',0)
+                if coolers_count == 0:
+                    print("    No Coolers.")
+                
+                if Q_hot_util_op_val > 1e-6 or Q_cold_util_op_val > 1e-6:
+                    print(f"\n  Utility Duty Summary:")
+                    if Q_cold_util_op_val > 1e-6: print(f"    Total Cold Utility {coolers_count} Exchanger{'s' if coolers_count > 1 else ''}:, total duty: {Q_cold_util_op_val:.2f} kW")
+                    else: print(f"    No Cold Utility required.")    
+                    if Q_hot_util_op_val > 1e-6: print(f"    Total Hot Utility: {heaters_count} Exchanger{'s' if coolers_count > 1 else ''}, total duty: {Q_hot_util_op_val:.2f} kW")
+                    else: print(f"    No Hot Utility required.")
+                else:
+                    print(f"\n  Neither Hot or Cold Utility Required by the best solution.")
+            else:
+                print("  Best solution chromosome, details, or HEN problem instance are missing. Cannot print detailed structure.")
+        else:
+            print(f"\nNo valid (finite optimized objective) best solution found across all runs for {model_name}.")
+        
+        # --- After printing to console, call the export function ---
+        if best_run_final_info and output_dir:
+            export_results(best_run_final_info, hen_problem_instance, output_dir)
 
 def display_problem_summary(hen_problem):
     """Prints a summary of the HEN problem definition."""

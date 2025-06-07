@@ -2,7 +2,7 @@
     "file_paths": {
         "streams_file": "streams.csv",
         "utilities_file": "utilities.csv",
-        "matches_U_file": "matches_U_cost.csv",
+        "matches_U_file": null,
         "forbidden_matches_file": null,
         "required_matches_file": null
     },

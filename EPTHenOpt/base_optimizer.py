@@ -101,7 +101,7 @@ class BaseOptimizer:
         NH = self.problem.NH
         NC = self.problem.NC
         ST = self.problem.num_stages
-        EMAT = self.problem.cost_params.EMAT
+        EMAT = getattr(self.problem.cost_params, 'EMAT', 10.0)
 
         capital_cost_process_exchangers = 0.0
         capital_cost_heaters = 0.0
@@ -513,6 +513,14 @@ class BaseOptimizer:
     def get_best_chromosome(self):
         """Returns the best chromosome found so far."""
         return self.best_chromosome_overall
+    
+    def _evaluate_population(self, population):
+        for chromosome in population:
+            detailed_costs, exchanger_details_list = self._calculate_fitness(chromosome)
+            self.fitnesses.append(detailed_costs)
+            self.details_list.append(exchanger_details_list)
+        return self.fitnesses, self.details_list
+
 
     def run(self, run_id_for_print=""):
         """Runs the optimizer for the total number of generations."""

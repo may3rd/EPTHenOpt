@@ -34,7 +34,7 @@ For a detailed explanation of the underlying methodology and its academic contex
 
 1.  **Clone the repository:**
     ```bash
-    git clone [https://github.com/may3rd/EPTHenOpt.git](https://github.com/may3rd/EPTHenOpt.git)
+    git clone https://github.com/may3rd/EPTHenOpt.git
     cd EPTHenOpt
     ```
 
@@ -75,11 +75,6 @@ The easiest way to manage settings is through the `config.json` file. It now sup
     "default_co2_hot_utility": 0.2,
     "default_co2_cold_utility": 0.05
   },
-  "problem_cost_parameters": { ... },
-  "ga_parameters": { ... },
-  "pso_parameters": { ... },
-  "sa_parameters": { ... },
-  "aco_parameters": { ... }
 }
 ```
 

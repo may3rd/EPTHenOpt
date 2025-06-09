@@ -93,14 +93,35 @@ def main(args):
     ] if loaded_cu_data else []
 
     if not hot_utilities and cold_streams:
-        hot_utilities.append(Utility(id_val="DefaultHU", Tin=500, Tout=499, U=1.0, cost_per_energy_unit=0.02, fix_cost=1000, area_cost_coeff=80, area_cost_exp=0.6, utility_type='hot_utility', co2_factor=args.default_co2_hot_utility or 0.0))
+        hot_utilities.append(Utility(id_val="DefaultHU", Tin=500, Tout=499,
+                                     U=1.0, cost_per_energy_unit=0.02,
+                                     fix_cost=1000, area_cost_coeff=80,
+                                     area_cost_exp=0.6, utility_type='hot_utility',
+                                     co2_factor=args.default_co2_hot_utility or 0.0))
         print("Warning: No hot utilities loaded from file, using a default hot utility.")
 
     if not cold_utilities and hot_streams:
-        cold_utilities.append(Utility(id_val="DefaultCU", Tin=20, Tout=30, U=1.0, cost_per_energy_unit=0.005, fix_cost=500, area_cost_coeff=70, area_cost_exp=0.65, utility_type='cold_utility', co2_factor=args.default_co2_cold_utility or 0.0))
+        cold_utilities.append(Utility(id_val="DefaultCU", Tin=20, Tout=30,
+                                      U=1.0, cost_per_energy_unit=0.005,
+                                      fix_cost=500, area_cost_coeff=70,
+                                      area_cost_exp=0.65, utility_type='cold_utility',
+                                      co2_factor=args.default_co2_cold_utility or 0.0))
         print("Warning: No cold utilities loaded from file, using a default cold utility.")
 
-    cost_params = CostParameters(EMAT=args.EMAT_setting, U_overall=args.default_U_overall, exch_fixed=args.exchanger_fixed_cost, exch_area_coeff=args.exchanger_area_coeff, exch_area_exp=args.exchanger_area_exp, heater_fixed=args.heater_fixed_cost, heater_area_coeff=args.heater_area_coeff, heater_area_exp=args.heater_area_exp, cooler_fixed=args.cooler_fixed_cost, cooler_area_coeff=args.cooler_area_coeff, cooler_area_exp=args.cooler_area_exp)
+    cost_params = CostParameters(
+        exch_fixed=args.exchanger_fixed_cost,
+        exch_area_coeff=args.exchanger_area_coeff,
+        exch_area_exp=args.exchanger_area_exp,
+        heater_fixed=args.heater_fixed_cost,
+        heater_area_coeff=args.heater_area_coeff,
+        heater_area_exp=args.heater_area_exp,
+        cooler_fixed=args.cooler_fixed_cost,
+        cooler_area_coeff=args.cooler_area_coeff,
+        cooler_area_exp=args.cooler_area_exp,
+        U_overall=args.default_U_overall,
+        EMAT=args.EMAT_setting,
+        )
+    
     num_stages = args.num_stages if args.num_stages > 0 else max(1, len(hot_streams), len(cold_streams))
 
     hen_problem = HENProblem(
@@ -108,7 +129,11 @@ def main(args):
         hot_utility=hot_utilities, cold_utility=cold_utilities,
         cost_params=cost_params, num_stages=num_stages,
         matches_U_cost=loaded_matches_U, forbidden_matches=loaded_forbidden,
-        required_matches=loaded_required, no_split=args.no_split)
+        required_matches=loaded_required, no_split=args.no_split,
+        min_Q_limit=args.mininum_Q_limit
+    )
+
+    display_problem_summary(hen_problem)
 
     print("\n" + "="*50)
     print("Optimization Run Configuration".center(50))
@@ -267,6 +292,7 @@ def cli():
     problem_group = parser.add_argument_group('Problem & Cost Parameters')
     problem_group.add_argument('--EMAT_setting', type=float)
     problem_group.add_argument('--default_U_overall', type=float)
+    problem_group.add_argument('--mininum_Q_limit', type=float)
     # Separated cost parameters
     problem_group.add_argument('--exchanger_fixed_cost', type=float)
     problem_group.add_argument('--exchanger_area_coeff', type=float)

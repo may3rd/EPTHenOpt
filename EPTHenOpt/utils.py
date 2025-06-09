@@ -562,12 +562,13 @@ def display_optimization_results(all_run_results, hen_problem_instance, model_na
             
             costs_to_print = best_run_final_info['costs']
             print("\nCost Breakdown for the Best Overall Solution:")
-            print(f"  True TAC: {costs_to_print.get('TAC_true_report', 0):.2f}, Optimized Obj.: {costs_to_print.get(OBJ_KEY_OPTIMIZING,0):.2f}")
-            print(f"  CapEx (Process Ex.): {costs_to_print.get('capital_process_exchangers',0):.2f}")
-            print(f"  CapEx (Heaters): {costs_to_print.get('capital_heaters',0):.2f}")
-            print(f"  CapEx (Coolers): {costs_to_print.get('capital_coolers',0):.2f}")
-            print(f"  OpEx (Hot Utility): {costs_to_print.get('op_cost_hot_utility',0):.2f}")
-            print(f"  OpEx (Cold Utility): {costs_to_print.get('op_cost_cold_utility',0):.2f}")
+            print(f"  Optimized Objective : {costs_to_print.get(OBJ_KEY_OPTIMIZING,0):.2f}")
+            print(f"  True TAC            : {costs_to_print.get('TAC_true_report', 0):.2f}")
+            print(f"  CapEx (Process Ex.) : {costs_to_print.get('capital_process_exchangers',0):.2f}")
+            print(f"  CapEx (Heaters)     : {costs_to_print.get('capital_heaters',0):.2f}")
+            print(f"  CapEx (Coolers)     : {costs_to_print.get('capital_coolers',0):.2f}")
+            print(f"  OpEx (Hot Utility)  : {costs_to_print.get('op_cost_hot_utility',0):.2f}")
+            print(f"  OpEx (Cold Utility) : {costs_to_print.get('op_cost_cold_utility',0):.2f}")
             
             penalty_keys = [k for k in costs_to_print if "penalty" in k.lower() and costs_to_print.get(k, 0) > 1e-6]
             if penalty_keys:
@@ -608,6 +609,9 @@ def display_optimization_results(all_run_results, hen_problem_instance, model_na
                         Tc_in_val = detail.get('Tc_in',0.0)
                         Tc_out_val = detail.get('Tc_out',0.0)
                         Area_val = detail.get('Area',0.0)
+                        U = detail.get('U',0.0)
+                        lmtd = detail.get('lmtd',0.0)
+                        cost = detail.get('cost',0.0)
 
                         if Q_val < 1e-6: continue 
 
@@ -620,7 +624,7 @@ def display_optimization_results(all_run_results, hen_problem_instance, model_na
                         if abs(Tc_in_val - Tc_out_val) > 1e-6: cold_CFp = Q_val / abs(Tc_in_val - Tc_out_val)
                         if cold_stream_obj.CP > 1e-6: cold_Split_ratio = cold_CFp / cold_stream_obj.CP
 
-                        print(f"  {process_exchangers_count+1:2d}  {hot_name}-{cold_name} (Stage {detail.get('k',0)+1}): Q={Q_val:.2f} kW, Area={Area_val:.2f} m^2")
+                        print(f"  {process_exchangers_count+1:2d}  {hot_name}-{cold_name} (Stage {detail.get('k',0)+1}): Q={Q_val:.2f} kW, Area={Area_val:.2f} m^2, U={U:.2f}, LMTD={lmtd:.2f}, Cost=${cost:.2f}")
                         print(f"      {hot_name}: FlowCp_branch={hot_CFp:.2f} (SplitFrac={hot_Split_ratio:.3f}), Tin={Th_in_val:.1f} K, Tout={Th_out_val:.1f} K")
                         print(f"      {cold_name}: FlowCp_branch={cold_CFp:.2f} (SplitFrac={cold_Split_ratio:.3f}), Tin={Tc_in_val:.1f} K, Tout={Tc_out_val:.1f} K\n")
                         
@@ -636,30 +640,60 @@ def display_optimization_results(all_run_results, hen_problem_instance, model_na
                 
                 print("\n  Utility Units:")
                 heaters_count, coolers_count = 0, 0
+                
+                # --- HEATER PRINTING LOGIC ---
                 for detail in details_overall:
                     if detail.get('type') == 'heater':
                         heaters_count += 1
                         cold_stream_obj = hen_problem_instance.cold_streams[detail['C_idx']]
-                        print(f"   {heaters_count:2d} Heater for {cold_stream_obj.id}: Q={detail.get('Q',0):.2f} kW, Area={detail.get('area',0):.2f} m^2, Tc_in={detail.get('Tc_in',0):.1f} K, Tc_out={detail.get('Tc_out',0):.1f} K")
-                        Q_hot_util_op_val += detail.get('Q',0)
+                        # Use the correct keys from the 'detail' dictionary
+                        q_val = detail.get('Q', 0)
+                        area_val = detail.get('Area', 0) # Use 'Area' (capital A)
+                        tc_in_val = detail.get('Tc_in', 0)
+                        tc_out_val = detail.get('Tc_out', 0)
+                        cap_cost = detail.get('cap', 0)
+                        op_cost = detail.get('op', 0)
+                        
+                        print(f"   {heaters_count:2d} Heater for {cold_stream_obj.id}: Q={q_val:.2f} kW, Area={area_val:.2f} m^2")
+                        print(f"       Process Stream: Tin={tc_in_val:.1f} K, Tout={tc_out_val:.1f} K")
+                        print(f"       Costs: Capital=${cap_cost:.2f}, Operating=${op_cost:.2f}\n")
+                        
+                        Q_hot_util_op_val += q_val
+                
                 if heaters_count == 0:
-                    print("    No Heaters.")
+                    print("    No Heaters.\n")
 
+                # --- COOLER PRINTING LOGIC ---
                 for detail in details_overall:
                     if detail.get('type') == 'cooler':
                         coolers_count += 1
                         hot_stream_obj = hen_problem_instance.hot_streams[detail['H_idx']]
-                        print(f"   {coolers_count:2d} Cooler for {hot_stream_obj.id}: Q={detail.get('Q',0):.2f} kW, Area={detail.get('area',0):.2f} m^2, Th_in={detail.get('Th_in',0):.1f} K, Th_out={detail.get('Th_out',0):.1f} K")
-                        Q_cold_util_op_val += detail.get('Q',0)
+                        # Use the correct keys from the 'detail' dictionary
+                        q_val = detail.get('Q', 0)
+                        area_val = detail.get('Area', 0) # Use 'Area' (capital A)
+                        th_in_val = detail.get('Th_in', 0)
+                        th_out_val = detail.get('Th_out', 0)
+                        cap_cost = detail.get('cap', 0)
+                        op_cost = detail.get('op', 0)
+                        
+                        print(f"   {coolers_count:2d} Cooler for {hot_stream_obj.id}: Q={q_val:.2f} kW, Area={area_val:.2f} m^2")
+                        print(f"       Process Stream: Tin={th_in_val:.1f} K, Tout={th_out_val:.1f} K")
+                        print(f"       Costs: Capital=${cap_cost:.2f}, Operating=${op_cost:.2f}\n")
+                        
+                        Q_cold_util_op_val += q_val
+                
                 if coolers_count == 0:
                     print("    No Coolers.")
                 
                 if Q_hot_util_op_val > 1e-6 or Q_cold_util_op_val > 1e-6:
                     print(f"\n  Utility Duty Summary:")
-                    if Q_cold_util_op_val > 1e-6: print(f"    Total Cold Utility {coolers_count} Exchanger{'s' if coolers_count > 1 else ''}:, total duty: {Q_cold_util_op_val:.2f} kW")
-                    else: print(f"    No Cold Utility required.")    
-                    if Q_hot_util_op_val > 1e-6: print(f"    Total Hot Utility: {heaters_count} Exchanger{'s' if coolers_count > 1 else ''}, total duty: {Q_hot_util_op_val:.2f} kW")
-                    else: print(f"    No Hot Utility required.")
+                    if Q_hot_util_op_val > 1e-6:
+                        print(f"    Total Hot Utility: {heaters_count} Exchanger{'s' if coolers_count > 1 else ''}, total duty: {Q_hot_util_op_val:.2f} kW")
+                    else:
+                        print(f"    No Hot Utility required.")
+                    if Q_cold_util_op_val > 1e-6:
+                        print(f"    Total Cold Utility {coolers_count} Exchanger{'s' if coolers_count > 1 else ''}:, total duty: {Q_cold_util_op_val:.2f} kW")
+                    else: print(f"    No Cold Utility required.")
                 else:
                     print(f"\n  Neither Hot or Cold Utility Required by the best solution.")
             else:
@@ -673,39 +707,45 @@ def display_optimization_results(all_run_results, hen_problem_instance, model_na
 
 def display_problem_summary(hen_problem):
     """Prints a summary of the HEN problem definition to the console."""
-    print("\n" + "="*50)
-    print("HEN Problem Summary".center(50))
-    print("="*50)
+    print("\n" + "="*80)
+    print("HEN Problem Summary".center(80))
+    print("="*80)
     
     print(f"\nHot Streams ({hen_problem.NH} total):")
     if hen_problem.hot_streams:
+        max_len = max(len(hs.id) for hs in hen_problem.hot_streams)
         for hs in hen_problem.hot_streams:
-            print(f"  - ID: {hs.id:<10} | Tin: {hs.Tin:<7.1f}K | Tout: {hs.Tout_target:<7.1f}K | CP: {hs.CP:<7.2f} kW/K")
+            print(f"  - ID: {hs.id:<{max_len}} | Tin: {hs.Tin:<7.1f}K | Tout: {hs.Tout_target:<7.1f}K | CP: {hs.CP:<7.2f} kW/K")
     else:
         print("  None")
         
     print(f"\nCold Streams ({hen_problem.NC} total):")
     if hen_problem.cold_streams:
+        max_len = max(len(cs.id) for cs in hen_problem.cold_streams)
         for cs in hen_problem.cold_streams:
-            print(f"  - ID: {cs.id:<10} | Tin: {cs.Tin:<7.1f}K | Tout: {cs.Tout_target:<7.1f}K | CP: {cs.CP:<7.2f} kW/K")
+            print(f"  - ID: {cs.id:<{max_len}} | Tin: {cs.Tin:<7.1f}K | Tout: {cs.Tout_target:<7.1f}K | CP: {cs.CP:<7.2f} kW/K")
     else:
         print("  None")
         
     print(f"\nHot Utilities ({hen_problem.NHU} total):")
     if hen_problem.hot_utility:
+        max_len = max(len(hu.id) for hu in hen_problem.hot_utility)
         for hu in hen_problem.hot_utility:
-            print(f"  - ID: {hu.id:<10} | Tin: {hu.Tin:<7.1f}K | Tout: {hu.Tout:<7.1f}K | Cost: {hu.cost} $/kW")
+            print(f"  - ID: {hu.id:<{max_len}} | Tin: {hu.Tin:<7.1f}K | Tout: {hu.Tout:<7.1f}K | Cost: {hu.cost} $/kW")
     else:
         print("  None")
 
     print(f"\nCold Utilities ({hen_problem.NCU} total):")
     if hen_problem.cold_utility:
+        max_len = max(len(cu.id) for cu in hen_problem.cold_utility)
         for cu in hen_problem.cold_utility:
-            print(f"  - ID: {cu.id:<10} | Tin: {cu.Tin:<7.1f}K | Tout: {cu.Tout:<7.1f}K | Cost: {cu.cost} $/kW")
+            print(f"  - ID: {cu.id:<{max_len}} | Tin: {cu.Tin:<7.1f}K | Tout: {cu.Tout:<7.1f}K | Cost: {cu.cost} $/kW")
     else:
         print("  None")
     
-    print("\n" + "="*50 + "\n")
+    print(f"\nNumber of stage: {hen_problem.num_stages}")
+    
+    print("\n" + "="*80 + "\n")
 
 def display_help():
     """Prints the command-line interface help message and exits."""

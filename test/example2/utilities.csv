@@ -1,0 +1,3 @@
+Name,Type,TIN_utility,TOUT_utility,Unit_Cost_Energy,U_overall,Fixed_Cost_Unit,Area_Cost_Coeff,Area_Cost_Exp,co2_factor
+S1,hot_utility,453.15,453.15,0,0.05,8600,670,0.83,0.2
+W1,cold_utility,283.15,288.15,0,0.05,8600,670,0.83,0.05

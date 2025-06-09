@@ -203,73 +203,89 @@ class BaseOptimizer:
                     else:
                         FC_ijk[active_indices, j, k] = 1.0 / num_active
         return FH_ijk, FC_ijk
-
-    def _perform_sws(self, Z_ijk, FH_ijk, FC_ijk):
-        """
-        Performs the Sequential Workspace Synthesis (SWS) calculation.
-        Returns a dictionary with converged results or a failure flag.
-        """
-        NH, NC, ST = self.problem.NH, self.problem.NC, self.problem.num_stages
-        
-        if NH * NC * ST >= 100:
-            return self._perform_sws_np(Z_ijk, FH_ijk, FC_ijk)
-        else:
-            return self._perform_sws_loop(Z_ijk, FH_ijk, FC_ijk)
-
     # In base_optimizer.py
 
-    def _perform_sws_np(self, Z_ijk, FH_ijk, FC_ijk):
+    def _perform_sws(self, Z_ijk, FH_ijk, FC_ijk):
         """Performs the Sequential Workspace Synthesis (SWS) calculation.
 
-        This is a highly optimized and vectorized implementation that uses
-        pre-computed stream property arrays to minimize overhead.
+        This is a highly optimized hybrid implementation. It pre-allocates
+        working arrays to minimize memory overhead inside the loops, while
+        vectorizing the core arithmetic for maximum performance.
         """
-        # 1. Initialization and Guard Clauses
-        # ------------------------------------
+        # 1. Initialization and Pre-computation
+        # ---------------------------------------
         NH, NC, ST = self.problem.NH, self.problem.NC, self.problem.num_stages
         EMAT = self.problem.cost_params.EMAT
 
         if NH == 0 or NC == 0:
-            return {
-                "converged": True, "Q_ijk": np.zeros((NH, NC, ST)), 
-                "T_mix_H": np.empty((NH, ST)), "T_mix_C": np.empty((NC, ST)),
-                "final_Th_after_recovery": self._hs_Tin,
-                "final_Tc_after_recovery": self._cs_Tin
-            }
+            return {"converged": True, "Q_ijk": np.zeros((NH, NC, ST)), 
+                    "T_mix_H": np.empty((NH, ST)), "T_mix_C": np.empty((NC, ST)),
+                    "final_Th_after_recovery": self._hs_Tin,
+                    "final_Tc_after_recovery": self._cs_Tin}
 
-        # Use pre-computed arrays from __init__ instead of creating them here
         T_mix_H = self._initial_T_mix_H.copy()
         T_mix_C = self._initial_T_mix_C.copy()
         Q_ijk = np.zeros((NH, NC, ST))
         
+        # --- Performance Critical: Pre-allocate working matrices ONCE ---
+        # These will be updated in-place inside the loop to avoid re-allocation.
+        q_limits = np.empty((4, NH, NC))
+        CPH_b_matrix = np.empty((NH, NC))
+        CPC_b_matrix = np.empty((NH, NC))
+        
+        # --- NEW: Pre-calculate a static feasibility mask for all stages ---
+        # This mask checks for fundamental thermodynamic impossibility.
+        # It assumes the worst case: coldest possible Th_in (target) and
+        # hottest possible Tc_in (target). A match is impossible if hs.Tout_target > cs.Tout_target
+        # This is a heuristic but effective pre-filter. A more precise check is still done inside.
+        static_feasibility_mask = self._hs_Tout_target[:, np.newaxis] <= self._cs_Tout_target[np.newaxis, :]
+
+        # Combine with superstructure mask. A match can only happen if Z_ijk is ever 1.
+        # This prevents calculations for pairs that never match in any stage.
+        combined_static_mask = Z_ijk.any(axis=2) * static_feasibility_mask
+
         # 2. SWS Iteration Loop
         # -----------------------
         for sws_iter in range(self.sws_max_iter):
             T_mix_H_prev = T_mix_H.copy()
             T_mix_C_prev = T_mix_C.copy()
 
-            # 2a. Hot Pass
-            # ------------
+            # 2a. Hot Pass (calculates Q_ijk for all stages)
+            # -----------------------------------------------
             for k in range(ST):
+                # Skip stage if no matches are possible at all
+                if not Z_ijk[:, :, k].any():
+                    Q_ijk[:, :, k] = 0
+                    T_mix_H[:, k] = T_mix_H_prev[:, k-1] if k > 0 else self._hs_Tin
+                    continue
+                
                 TinH_stage_k = T_mix_H_prev[:, k - 1] if k > 0 else self._hs_Tin
                 Tcin_stage_k = T_mix_C_prev[:, k + 1] if k < ST - 1 else self._cs_Tin
                 
-                TinH_matrix = TinH_stage_k[:, np.newaxis]
-                Tcin_matrix = Tcin_stage_k[np.newaxis, :]
-
-                CPH_b_matrix = self._hs_CP[:, np.newaxis] * FH_ijk[:, :, k]
-                CPC_b_matrix = self._cs_CP[np.newaxis, :] * FC_ijk[:, :, k]
-
-                Q_H_target_limit = CPH_b_matrix * (TinH_matrix - self._hs_Tout_target[:, np.newaxis])
-                Q_H_EMAT_limit   = CPH_b_matrix * (TinH_matrix - (Tcin_matrix + EMAT))
-                Q_C_target_limit = CPC_b_matrix * (self._cs_Tout_target[np.newaxis, :] - Tcin_matrix)
-                Q_C_EMAT_limit   = CPC_b_matrix * ((TinH_matrix - EMAT) - Tcin_matrix)
-
-                Q_m = np.minimum.reduce([Q_H_target_limit, Q_H_EMAT_limit,
-                                         Q_C_target_limit, Q_C_EMAT_limit])
+                # --- NEW: Dynamic Feasibility Check for the current temperatures ---
+                # This is the precise check you requested.
+                dynamic_feasibility_mask = (TinH_stage_k[:, np.newaxis] > Tcin_stage_k[np.newaxis, :] + EMAT)
                 
-                Q_ijk[:, :, k] = np.maximum(0, Q_m) * Z_ijk[:, :, k]
+                # Final mask for this stage's calculation
+                active_mask = combined_static_mask * dynamic_feasibility_mask
+
+                # Update working matrices in-place where the mask is True
+                np.multiply(self._hs_CP[:, np.newaxis], FH_ijk[:, :, k], out=CPH_b_matrix, where=active_mask)
+                np.multiply(self._cs_CP[np.newaxis, :], FC_ijk[:, :, k], out=CPC_b_matrix, where=active_mask)
                 
+                # Calculate Q limits, writing results directly into the pre-allocated array `q_limits`
+                np.multiply(CPH_b_matrix, (TinH_stage_k[:, np.newaxis] - self._hs_Tout_target[:, np.newaxis]), out=q_limits[0], where=active_mask)
+                np.multiply(CPH_b_matrix, (TinH_stage_k[:, np.newaxis] - (Tcin_stage_k[np.newaxis, :] + EMAT)), out=q_limits[1], where=active_mask)
+                np.multiply(CPC_b_matrix, (self._cs_Tout_target[np.newaxis, :] - Tcin_stage_k[np.newaxis, :]), out=q_limits[2], where=active_mask)
+                np.multiply(CPC_b_matrix, ((TinH_stage_k[:, np.newaxis] - EMAT) - Tcin_stage_k[np.newaxis, :]), out=q_limits[3], where=active_mask)
+
+                # Find the minimum limit and apply masks
+                Q_m = np.min(q_limits, axis=0)
+                # Set Q to 0 if it's below the minimum limit, then apply other masks.
+                Q_m_limited = np.where(Q_m >= self.problem.min_Q_limit, Q_m, 0)
+                Q_ijk[:, :, k] = Q_m_limited * active_mask
+
+                # Update hot stream mixer temperatures
                 Q_total_from_hot_at_k = np.sum(Q_ijk[:, :, k], axis=1)
                 with np.errstate(divide='ignore', invalid='ignore'):
                     delta_T = Q_total_from_hot_at_k / self._hs_CP
@@ -290,84 +306,14 @@ class BaseOptimizer:
             delta_C = np.max(np.abs(T_mix_C - T_mix_C_prev)) if NC > 0 else 0
 
             if delta_H < self.sws_conv_tol and delta_C < self.sws_conv_tol and sws_iter > 0:
-                return {
-                    "converged": True, "Q_ijk": Q_ijk, "T_mix_H": T_mix_H, "T_mix_C": T_mix_C,
-                    "final_Th_after_recovery": T_mix_H[:, -1] if ST > 0 else self._hs_Tin,
-                    "final_Tc_after_recovery": T_mix_C[:, 0] if ST > 0 else self._cs_Tin
-                }
+                return {"converged": True, "Q_ijk": Q_ijk, "T_mix_H": T_mix_H, "T_mix_C": T_mix_C,
+                        "final_Th_after_recovery": T_mix_H[:, -1] if ST > 0 else self._hs_Tin,
+                        "final_Tc_after_recovery": T_mix_C[:, 0] if ST > 0 else self._cs_Tin}
 
-        return {"converged": False}
-
-    def _perform_sws_loop(self, Z_ijk, FH_ijk, FC_ijk):
-        """
-        Performs the Sequential Workspace Synthesis (SWS) calculation.
-        Returns a dictionary with converged results or a failure flag.
-        """
-        NH, NC, ST = self.problem.NH, self.problem.NC, self.problem.num_stages
-        EMAT = self.problem.cost_params.EMAT
-
-        T_mix_H = np.array([[hs.Tin for _ in range(ST)] for hs in self.problem.hot_streams])
-        T_mix_C = np.array([[cs.Tin for _ in range(ST)] for cs in self.problem.cold_streams])
-        
-        Q_ijk = np.zeros((NH, NC, ST))
-        
-        for sws_iter in range(self.sws_max_iter):
-            T_mix_H_prev = T_mix_H.copy()
-            T_mix_C_prev = T_mix_C.copy()
-
-            # Hot pass (from inlet to outlet)
-            for k in range(ST):
-                TinH_stage_k = T_mix_H_prev[:, k - 1] if k > 0 else np.array([s.Tin for s in self.problem.hot_streams])
-                Q_total_from_hot_at_k = np.zeros(NH)
-                for i in range(NH):
-                    hs = self.problem.hot_streams[i]
-                    for j in range(NC):
-                        if Z_ijk[i, j, k] == 1:
-                            cs = self.problem.cold_streams[j]
-                            Tcin_branch = T_mix_C_prev[j, k + 1] if k < ST - 1 else cs.Tin
-                            CPH_b = hs.CP * FH_ijk[i, j, k]
-                            CPC_b = cs.CP * FC_ijk[i, j, k]
-                            
-                            Q_m = 0
-                            if CPH_b > 1e-9 and CPC_b > 1e-9:
-                                Q_H_target_limit = CPH_b * (TinH_stage_k[i] - hs.Tout_target)
-                                Q_H_EMAT_limit   = CPH_b * (TinH_stage_k[i] - (Tcin_branch + EMAT))
-                                Q_C_target_limit = CPC_b * (cs.Tout_target - Tcin_branch)
-                                Q_C_EMAT_limit   = CPC_b * ((TinH_stage_k[i] - EMAT) - Tcin_branch)
-                                Q_m = max(0, min(Q_H_target_limit, Q_H_EMAT_limit, Q_C_target_limit, Q_C_EMAT_limit))
-                            
-                            Q_ijk[i, j, k] = Q_m
-                            Q_total_from_hot_at_k[i] += Q_m
-                
-                for i in range(NH):
-                    if self.problem.hot_streams[i].CP > 1e-9:
-                        T_mix_H[i, k] = TinH_stage_k[i] - Q_total_from_hot_at_k[i] / self.problem.hot_streams[i].CP
-                    else:
-                        T_mix_H[i, k] = TinH_stage_k[i]
-
-            # Cold pass (from outlet to inlet)
-            for k in range(ST - 1, -1, -1):
-                TinC_stage_k = T_mix_C_prev[:, k + 1] if k < ST - 1 else np.array([s.Tin for s in self.problem.cold_streams])
-                Q_total_to_cold_at_k = np.sum(Q_ijk[:, :, k], axis=0) # Sum Q over hot streams for each cold stream
-                
-                for j in range(NC):
-                    if self.problem.cold_streams[j].CP > 1e-9:
-                        T_mix_C[j, k] = TinC_stage_k[j] + Q_total_to_cold_at_k[j] / self.problem.cold_streams[j].CP
-                    else:
-                        T_mix_C[j, k] = TinC_stage_k[j]
-
-            # Convergence check
-            delta_H = np.max(np.abs(T_mix_H - T_mix_H_prev)) if NH > 0 and ST > 0 else 0
-            delta_C = np.max(np.abs(T_mix_C - T_mix_C_prev)) if NC > 0 and ST > 0 else 0
-
-            if delta_H < self.sws_conv_tol and delta_C < self.sws_conv_tol and sws_iter > 0:
-                return {
-                    "converged": True, "Q_ijk": Q_ijk, "T_mix_H": T_mix_H, "T_mix_C": T_mix_C,
-                    "final_Th_after_recovery": T_mix_H[:, -1] if ST > 0 else np.array([s.Tin for s in self.problem.hot_streams]),
-                    "final_Tc_after_recovery": T_mix_C[:, 0] if ST > 0 else np.array([s.Tin for s in self.problem.cold_streams])
-                }
-
-        return {"converged": False} # Failed to converge
+        return {"converged": False, "Q_ijk": np.zeros((NH, NC, ST)),
+                    "T_mix_H": np.empty((NH, ST)), "T_mix_C": np.empty((NC, ST)),
+                    "final_Th_after_recovery": self._hs_Tin,
+                    "final_Tc_after_recovery": self._cs_Tin}
 
     def _calculate_process_exchanger_costs(self, Z_ijk, sws_results, FH_ijk, FC_ijk, adaptive_penalty):
         """Calculates capital cost and EMAT penalty for process exchangers."""
@@ -410,7 +356,7 @@ class BaseOptimizer:
                                self.problem.area_cost_process_coeff[i,j] * (area ** self.problem.area_cost_process_exp[i,j])
                         
                         capital_cost += cost
-                        details.append({'H': i, 'C': j, 'k': k, 'Q': Q, 'Area': area, 
+                        details.append({'H': i, 'C': j, 'k': k, 'Q': Q, 'Area': area, 'U': U, 'lmtd': lmtd, 'cost': cost,
                                         'Th_in': Th_in, 'Th_out': Th_out, 'Tc_in': Tc_in, 'Tc_out': Tc_out})
 
         costs = {"capital_process_exchangers": capital_cost, "penalty_EMAT_etc": penalty_EMAT}
@@ -434,7 +380,7 @@ class BaseOptimizer:
         for i in range(NH):
             hs = self.problem.hot_streams[i]
             Q_needed = hs.CP * (final_Th[i] - hs.Tout_target)
-            if Q_needed > 1e-6 and hs.CP > 1e-9:
+            if Q_needed > self.problem.min_Q_limit and hs.CP > 1e-9:
                 best_cu_choice = {'cost': float('inf')}
                 for cu in self.problem.cold_utility:
                     is_forbidden = any(f.get('hot') == hs.id and f.get('cold') == cu.id for f in self.problem.forbidden_matches or [])
@@ -452,7 +398,7 @@ class BaseOptimizer:
                     cap_cost = cu.fix_cost + cu.area_cost_coeff * (area ** cu.area_cost_exp)
                     op_cost = cu.cost * Q_needed
                     if cap_cost + op_cost < best_cu_choice['cost']:
-                        best_cu_choice = {'cost': cap_cost + op_cost, 'cap': cap_cost, 'op': op_cost, 'cu': cu, 'area': area, 'Th_in': Th_in, 'Th_out': Th_out, 'util_Tin': Tc_in, 'util_Tout': Tc_out, 'Q':Q_needed}
+                        best_cu_choice = {'cost': cap_cost + op_cost, 'cap': cap_cost, 'op': op_cost, 'cu': cu, 'Area': area, 'Th_in': Th_in, 'Th_out': Th_out, 'util_Tin': Tc_in, 'util_Tout': Tc_out, 'Q':Q_needed}
                 
                 if best_cu_choice['cost'] != float('inf'):
                     costs['capital_coolers'] += best_cu_choice['cap']
@@ -468,7 +414,7 @@ class BaseOptimizer:
         for j in range(NC):
             cs = self.problem.cold_streams[j]
             Q_needed = cs.CP * (cs.Tout_target - final_Tc[j])
-            if Q_needed > 1e-6 and cs.CP > 1e-9:
+            if Q_needed > self.problem.min_Q_limit and cs.CP > 1e-9:
                 best_hu_choice = {'cost': float('inf')}
                 for hu in self.problem.hot_utility:
                     is_forbidden = any(f.get('hot') == hu.id and f.get('cold') == cs.id for f in self.problem.forbidden_matches or [])
@@ -486,7 +432,7 @@ class BaseOptimizer:
                     cap_cost = hu.fix_cost + hu.area_cost_coeff * (area ** hu.area_cost_exp)
                     op_cost = hu.cost * Q_needed
                     if cap_cost + op_cost < best_hu_choice['cost']:
-                        best_hu_choice = {'cost': cap_cost + op_cost, 'cap': cap_cost, 'op': op_cost, 'hu': hu, 'area': area, 'Tc_in': Tc_in, 'Tc_out': Tc_out, 'util_Tin': Th_in, 'util_Tout': Th_out, 'Q':Q_needed}
+                        best_hu_choice = {'cost': cap_cost + op_cost, 'cap': cap_cost, 'op': op_cost, 'hu': hu, 'Area': area, 'Tc_in': Tc_in, 'Tc_out': Tc_out, 'util_Tin': Th_in, 'util_Tout': Th_out, 'Q':Q_needed}
 
                 if best_hu_choice['cost'] != float('inf'):
                     costs['capital_heaters'] += best_hu_choice['cap']

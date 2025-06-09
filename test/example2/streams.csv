@@ -1,0 +1,5 @@
+Name,Type,TIN_spec,TOUT_spec,Fcp
+H1,hot,423.15,333.15,20
+H2,hot,363.15,333.15,80
+C1,cold,293.15,398.15,25
+C2,cold,298.15,373.15,30

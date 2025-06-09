@@ -51,14 +51,14 @@ class CostParameters:
         self.cooler_fixed = cooler_fixed
         self.cooler_area_coeff = cooler_area_coeff
         self.cooler_area_exp = cooler_area_exp
-        self.EMAT = EMAT
         self.U_overall = U_overall
+        self.EMAT: float = EMAT
 
 class HENProblem:
     def __init__(self, hot_streams=None, cold_streams=None, hot_utility=None, cold_utility=None,
                  cost_params=None, num_stages=1, matches_U_cost=None,
                  forbidden_matches=None, required_matches=None, annual_op_hours=8000,
-                 no_split=False):
+                 no_split=False, min_Q_limit=0.0):
         self.hot_streams = hot_streams or []
         self.cold_streams = cold_streams or []
         self.hot_utility = hot_utility or []
@@ -71,6 +71,7 @@ class HENProblem:
         self.NCU = len(self.cold_utility)
         self.matches_U_cost = matches_U_cost
         self.annual_op_hours = annual_op_hours
+        self.min_Q_limit = min_Q_limit
 
         self.forbidden_matches = forbidden_matches
         self.required_matches = required_matches
@@ -146,6 +147,17 @@ class HENProblem:
                                     self.U_coolers[i,ic] = 1.0 / (1.0/h_cold_util + 1.0/h_hot_stream)
 
         self.Q_H_min_pinch, self.Q_C_min_pinch, self.T_pinch_hot_actual, self.T_pinch_cold_actual = self._calculate_pinch_targets()
+        
+        if self.T_pinch_hot_actual is None or self.T_pinch_cold_actual is None:
+            print(f"-- NO PINCH POINTS FOUND --")
+            exit(-1)
+        else:
+            print(f"-- PINCH POINTS FOUND --")
+            print(f" Min. Hot Utility: {self.Q_H_min_pinch}")
+            print(f" Min. Cold Utility: {self.Q_C_min_pinch}")
+            print(f" Hot Pinch Point: {self.T_pinch_hot_actual}")
+            print(f" Cold Pinch Point: {self.T_pinch_cold_actual}")
+
 
     def _calculate_pinch_targets(self):
         """
@@ -155,10 +167,10 @@ class HENProblem:
         """
         if not self.hot_streams and not self.cold_streams:
             return 0, 0, None, None
-        if not self.cost_params or self.cost_params.EMAT is None:
+        if not self.cost_params or self.cost_params.EMAT is None: # type: ignore
             return 0, 0, None, None
 
-        EMAT = self.cost_params.EMAT
+        EMAT = self.cost_params.EMAT # type: ignore
 
         # 1. Get all unique temperature points
         temp_points = set()

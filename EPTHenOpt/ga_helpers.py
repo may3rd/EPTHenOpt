@@ -11,9 +11,16 @@ import random
 import copy
 import numpy as np
 
-from .base_optimizer import BaseOptimizer # Import the new base class
+from .base_optimizer import BaseOptimizer
+from .utils import OBJ_KEY_OPTIMIZING, OBJ_KEY_REPORT # Import the new base class
 
-class GeneticAlgorithmHEN(BaseOptimizer):
+class GAVariationMixin:
+    """
+    A Mixin class providing standard genetic variation operators (crossover and mutation)
+    for HEN chromosome structures.
+    """
+
+class GeneticAlgorithmHEN(BaseOptimizer, GAVariationMixin):
     def __init__(self, 
                  problem,
                  population_size,
@@ -57,6 +64,7 @@ class GeneticAlgorithmHEN(BaseOptimizer):
     # are now inherited from BaseOptimizer.
 
     def _crossover(self, parent1_chromo, parent2_chromo):
+        """Performs single-point crossover on two parent chromosomes."""
         offspring1 = parent1_chromo.copy()
         offspring2 = parent2_chromo.copy()
         if random.random() < self.crossover_prob:
@@ -66,26 +74,32 @@ class GeneticAlgorithmHEN(BaseOptimizer):
                 offspring1 = np.concatenate((parent1_chromo[:cx_pt], parent2_chromo[cx_pt:]))
                 offspring2 = np.concatenate((parent2_chromo[:cx_pt], parent1_chromo[cx_pt:]))
         return offspring1, offspring2
-    
-    # Improved (in ga_helpers.py)
+
     def _mutate_continuous_gene(self, value):
+        """Helper function to apply Gaussian mutation to a single continuous gene."""
+        # This method relies on r_mutation_std_dev_factor being present in the main class
         std_dev = max(1e-3, abs(value * self.r_mutation_std_dev_factor))
         noise = random.gauss(0, std_dev)
         return max(1e-6, value + noise)
 
     def _mutation(self, chromosome):
+        """
+        Applies bit-flip mutation to the discrete Z-part and Gaussian mutation
+        to the continuous R-parts of the chromosome.
+        """
         mutated_chromosome = chromosome.copy()
+        # Mutate the discrete (Z) part
         for i in range(self.len_Z):
             if random.random() < self.mutation_prob_Z:
                 mutated_chromosome[i] = 1 - mutated_chromosome[i]
         
-        # Apply continuous mutation to both R sections
+        # Mutate the continuous (R) parts
         for i in range(self.len_Z, self.chromosome_length):
             if random.random() < self.mutation_prob_R:
                 mutated_chromosome[i] = self._mutate_continuous_gene(mutated_chromosome[i])
                 
         return mutated_chromosome
-
+    
     def _selection(self, current_population_evaluations):
         """
         Performs parent selection using k-way tournament selection.
@@ -114,7 +128,7 @@ class GeneticAlgorithmHEN(BaseOptimizer):
 
             for idx in contender_indices:
                 # Safely get the fitness, defaulting to infinity if absent.
-                fitness = current_population_evaluations[idx]['costs'].get('TAC_GA_optimizing', float('inf'))
+                fitness = current_population_evaluations[idx]['costs'].get(OBJ_KEY_OPTIMIZING, float('inf'))
                 
                 # The contender with the lowest (best) fitness wins.
                 # This naturally handles non-finite values.
@@ -142,7 +156,7 @@ class GeneticAlgorithmHEN(BaseOptimizer):
                 current_population_evaluations.append({'chromosome': chromo, 'costs': costs_dict, 'details': details})
             except Exception as e:
                 # print(f"Error calculating fitness for a chromosome: {e}")
-                error_costs = {"TAC_GA_optimizing": float('inf'), "TAC_true_report": float('inf')}
+                error_costs = {OBJ_KEY_OPTIMIZING: float('inf'), OBJ_KEY_REPORT: float('inf')}
                 current_population_evaluations.append({'chromosome': chromo, 'costs': error_costs, 'details': []})
 
         if not current_population_evaluations:
@@ -151,10 +165,10 @@ class GeneticAlgorithmHEN(BaseOptimizer):
             # Potentially evaluate fitnesses here again if needed immediately
             return # Skip the rest of generation evolution
 
-        current_population_evaluations.sort(key=lambda x: x['costs']['TAC_GA_optimizing'])
+        current_population_evaluations.sort(key=lambda x: x['costs'][OBJ_KEY_OPTIMIZING])
         
-        best_ga_tac_this_gen = current_population_evaluations[0]['costs']['TAC_GA_optimizing']
-        if best_ga_tac_this_gen < self.best_costs_overall_dict['TAC_GA_optimizing']:
+        best_ga_tac_this_gen = current_population_evaluations[0]['costs'][OBJ_KEY_OPTIMIZING]
+        if best_ga_tac_this_gen < self.best_costs_overall_dict[OBJ_KEY_OPTIMIZING]:
             self.best_costs_overall_dict = copy.deepcopy(current_population_evaluations[0]['costs'])
             self.best_chromosome_overall = current_population_evaluations[0]['chromosome'].copy()
             self.best_details_overall = copy.deepcopy(current_population_evaluations[0]['details'])

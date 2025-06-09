@@ -35,6 +35,9 @@ from .utils import (
     display_optimization_results,
     display_problem_summary,
     display_help,
+    OBJ_KEY_OPTIMIZING,
+    OBJ_KEY_REPORT,
+    OBJ_KEY_CO2
 )
 
 # Import the core parallel execution function
@@ -56,12 +59,13 @@ __all__ = [
     # Utilities
     'load_data_from_csv', 'calculate_lmtd', 'find_stream_index_by_id',
     'display_optimization_results', 'display_problem_summary', 'display_help',
+    'OBJ_KEY_OPTIMIZING', 'OBJ_KEY_REPORT', 'OBJ_KEY_CO2',
 
     # Core Execution
     'run_parallel_with_migration', 'run'
 ]
 
-__version__ = "0.7.0" # Version bump for new feature
+__version__ = "0.8.0" # Version bump for new feature
 __author__ = "Maetee Lorprajuksiri (26008353@pttgcgroup.com) E-PT-PX Department, GC Maintenance and Engineering Co. Ltd."
 
 def run(config_file='config.json', **kwargs):

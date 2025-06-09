@@ -1,11 +1,13 @@
 # EPTHenOpt/utils.py
-"""
-Utility functions for the EPTHenOpt package.
+"""Utility functions for the EPTHenOpt package.
 
 This module provides a collection of helper functions used across the package.
-Responsibilities include loading problem data from CSV files, calculating the
-Log Mean Temperature Difference (LMTD), and formatting and displaying the
-final optimization results in a human-readable format.
+Responsibilities include:
+- Loading problem data from CSV files.
+- Calculating the Log Mean Temperature Difference (LMTD).
+- Formatting and displaying final optimization results.
+- Exporting results to structured files.
+
 """
 import csv
 import math
@@ -16,21 +18,49 @@ import json
 
 MIN_LMTD = 1e-6
 
+OBJ_KEY_OPTIMIZING = "TAC_GA_optimizing"
+OBJ_KEY_REPORT = "TAC_true_report"
+OBJ_KEY_CO2 = "total_co2_emissions"
+
 def calculate_lmtd(Th_in, Th_out, Tc_in, Tc_out):
     """Calculates the Log Mean Temperature Difference (LMTD).
 
-    This function includes robust checks for temperature crosses and
-    avoids division-by-zero errors when temperature differences are equal.
+    This function includes robust checks for temperature crosses and avoids
+    division-by-zero errors when temperature differences are equal.
 
-    Args:
-        Th_in (float): Inlet temperature of the hot stream.
-        Th_out (float): Outlet temperature of the hot stream.
-        Tc_in (float): Inlet temperature of the cold stream.
-        Tc_out (float): Outlet temperature of the cold stream.
+    Parameters
+    ----------
+    Th_in : float
+        Inlet temperature of the hot stream, [K].
+    Th_out : float
+        Outlet temperature of the hot stream, [K].
+    Tc_in : float
+        Inlet temperature of the cold stream, [K].
+    Tc_out : float
+        Outlet temperature of the cold stream, [K].
 
-    Returns:
-        float: The calculated LMTD value, or a minimum value (MIN_LMTD)
-               if the temperature profile is invalid.
+    Returns
+    -------
+    float
+        The calculated LMTD value, or a minimum value (`MIN_LMTD`)
+        if the temperature profile is invalid or results in a non-positive LMTD.
+
+    Notes
+    -----
+    The function handles two main edge cases:
+    1.  Temperature cross: If `delta_T1` or `delta_T2` is non-positive, it
+        indicates an invalid heat exchange, and a minimal LMTD is returned.
+    2.  Equal temperature differences: If `delta_T1` and `delta_T2` are nearly
+        identical, the LMTD is simply that value, avoiding a division by zero
+        in the standard formula.
+
+    Examples
+    --------
+    >>> calculate_lmtd(Th_in=400, Th_out=350, Tc_in=300, Tc_out=320)
+    63.8263363403332
+    >>> calculate_lmtd(Th_in=400, Th_out=350, Tc_in=300, Tc_out=350)
+    50.0
+
     """
     delta_T1 = Th_in - Tc_out
     delta_T2 = Th_out - Tc_in
@@ -60,14 +90,68 @@ def calculate_lmtd(Th_in, Th_out, Tc_in, Tc_out):
 
 
 def find_stream_index_by_id(streams_list, stream_id_to_find):
-    # ... (implementation as before) ...
+    """Finds the index of a stream object in a list by its ID.
+
+    Parameters
+    ----------
+    streams_list : list[Stream]
+        A list of Stream objects to search through.
+    stream_id_to_find : str
+        The string ID of the stream to find.
+
+    Returns
+    -------
+    int
+        The index of the stream object if found, otherwise -1.
+    
+    Examples
+    --------
+    >>> from types import SimpleNamespace
+    >>> streams = [SimpleNamespace(id='H1'), SimpleNamespace(id='H2')]
+    >>> find_stream_index_by_id(streams, 'H2')
+    1
+    >>> find_stream_index_by_id(streams, 'C1')
+    -1
+
+    """
     for index, stream_obj in enumerate(streams_list):
         if stream_obj.id == stream_id_to_find:
             return index
     return -1
 
 def load_data_from_csv(streams_filepath, utilities_filepath, matches_U_filepath=None, forbidden_matches_filepath=None, required_matches_filepath=None): # Corrected parameter names
-    # ... (implementation as before, ensure parameter names match: forbidden_matches_filepath, required_matches_filepath) ...
+    """Loads all problem data from specified CSV files.
+
+    This function reads stream data, utility data, and optional constraint
+    data from CSV files and returns them as lists of dictionaries.
+
+    Parameters
+    ----------
+    streams_filepath : str
+        Path to the streams CSV file.
+    utilities_filepath : str
+        Path to the utilities CSV file.
+    matches_U_filepath : str, optional
+        Path to a CSV file specifying costs and U-values for specific
+        stream matches. Defaults to None.
+    forbidden_matches_filepath : str, optional
+        Path to a CSV file specifying forbidden matches between streams or
+        between streams and utilities. Defaults to None.
+    required_matches_filepath : str, optional
+        Path to a CSV file specifying required matches between streams.
+        Defaults to None.
+
+    Returns
+    -------
+    tuple
+        A tuple containing six elements:
+        (loaded_hot_streams, loaded_cold_streams, loaded_hot_utilities,
+        loaded_cold_utilities, loaded_matches_U, loaded_forbidden_matches,
+        loaded_required_matches)
+        Each element is a list of dictionaries, where each dictionary
+        represents a row from the corresponding CSV file.
+
+    """
     loaded_hot_streams = []
     loaded_cold_streams = []
     loaded_hot_utilities = []
@@ -210,13 +294,23 @@ def load_data_from_csv(streams_filepath, utilities_filepath, matches_U_filepath=
 
 
 def export_results(results_data, hen_problem, output_dir):
-    """
-    Exports the optimization results to structured files (JSON and CSV).
+    """Exports the optimization results to structured files (JSON and CSV).
 
-    Args:
-        results_data (dict): The dictionary containing the best run's results.
-        hen_problem (HENProblem): The HEN problem instance.
-        output_dir (str): The directory where files will be saved.
+    This function creates an output directory and saves three files:
+    - `summary.json`: A JSON file with the final cost breakdown.
+    - `network_structure.csv`: A CSV detailing each heat exchanger in the network.
+    - `stream_results.csv`: A CSV showing the final state of each stream.
+
+    Parameters
+    ----------
+    results_data : dict
+        The dictionary containing the best run's results, including 'costs'
+        and 'details' keys.
+    hen_problem : HENProblem
+        The HEN problem instance used for the optimization.
+    output_dir : str
+        The directory where result files will be saved.
+
     """
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -238,19 +332,29 @@ def export_results(results_data, hen_problem, output_dir):
     structure_path = output_path / 'network_structure.csv'
     structure_headers = [
         "Unit_Type", "Hot_Stream", "Cold_Stream", "Stage", "Heat_Duty_kW",
-        "Area_m2", "LMTD_K", "Hot_In_K", "Hot_Out_K", "Cold_In_K", "Cold_Out_K"
+        "Area_m2", "LMTD_K", "Hot_In_K", "Hot_Out_K", "Hot_Stream_FCp", "Hot_Stream_Split_Ratio",
+        "Cold_In_K", "Cold_Out_K", "Cold_Stream_FCp", "Cold_Stream_Split_Ratio"
     ]
     structure_rows = []
     final_stream_temps = {stream.id: stream.Tin for stream in hen_problem.hot_streams + hen_problem.cold_streams}
 
     for detail in details:
         row = {}
+        Q_val = detail.get('Q', 0.0)
+        
+        # Initialize values to avoid errors
+        row['Hot_Stream_FCp'] = 'N/A'
+        row['Hot_Stream_Split_Ratio'] = 'N/A'
+        row['Cold_Stream_FCp'] = 'N/A'
+        row['Cold_Stream_Split_Ratio'] = 'N/A'
+
         if detail.get('type') == 'heater':
             row['Unit_Type'] = 'Heater'
             cold_stream = hen_problem.cold_streams[detail['C_idx']]
             row['Hot_Stream'] = detail.get('Util_ID', 'N/A')
             row['Cold_Stream'] = cold_stream.id
-            row['Heat_Duty_kW'] = detail.get('Q', 0)
+            row['Stage'] = 'N/A'
+            row['Heat_Duty_kW'] = Q_val
             row['Area_m2'] = detail.get('Area', 0)
             row['Hot_In_K'] = detail.get('util_Tin', 0)
             row['Hot_Out_K'] = detail.get('util_Tout', 0)
@@ -263,7 +367,8 @@ def export_results(results_data, hen_problem, output_dir):
             hot_stream = hen_problem.hot_streams[detail['H_idx']]
             row['Hot_Stream'] = hot_stream.id
             row['Cold_Stream'] = detail.get('Util_ID', 'N/A')
-            row['Heat_Duty_kW'] = detail.get('Q', 0)
+            row['Stage'] = 'N/A'
+            row['Heat_Duty_kW'] = Q_val
             row['Area_m2'] = detail.get('Area', 0)
             row['Hot_In_K'] = detail.get('Th_in', 0)
             row['Hot_Out_K'] = detail.get('Th_out', 0)
@@ -273,16 +378,31 @@ def export_results(results_data, hen_problem, output_dir):
             final_stream_temps[hot_stream.id] = row['Hot_Out_K']
         else: # Process Exchanger
             row['Unit_Type'] = 'Process_Exchanger'
-            row['Hot_Stream'] = hen_problem.hot_streams[detail['H']].id
-            row['Cold_Stream'] = hen_problem.cold_streams[detail['C']].id
+            hot_stream = hen_problem.hot_streams[detail['H']]
+            cold_stream = hen_problem.cold_streams[detail['C']]
+            row['Hot_Stream'] = hot_stream.id
+            row['Cold_Stream'] = cold_stream.id
             row['Stage'] = detail.get('k', -1) + 1
-            row['Heat_Duty_kW'] = detail.get('Q', 0)
+            row['Heat_Duty_kW'] = Q_val
             row['Area_m2'] = detail.get('Area', 0)
             row['Hot_In_K'] = detail.get('Th_in', 0)
             row['Hot_Out_K'] = detail.get('Th_out', 0)
             row['Cold_In_K'] = detail.get('Tc_in', 0)
             row['Cold_Out_K'] = detail.get('Tc_out', 0)
             row['LMTD_K'] = calculate_lmtd(row['Hot_In_K'], row['Hot_Out_K'], row['Cold_In_K'], row['Cold_Out_K'])
+
+            # --- ADDED: Calculate FCp and Split Ratio ---
+            if abs(row['Hot_Out_K'] - row['Hot_In_K']) > 1e-6:
+                hot_fcp = Q_val / abs(row['Hot_Out_K'] - row['Hot_In_K'])
+                row['Hot_Stream_FCp'] = hot_fcp
+                if hot_stream.CP > 1e-6:
+                    row['Hot_Stream_Split_Ratio'] = hot_fcp / hot_stream.CP
+
+            if abs(row['Cold_Out_K'] - row['Cold_In_K']) > 1e-6:
+                cold_fcp = Q_val / abs(row['Cold_Out_K'] - row['Cold_In_K'])
+                row['Cold_Stream_FCp'] = cold_fcp
+                if cold_stream.CP > 1e-6:
+                    row['Cold_Stream_Split_Ratio'] = cold_fcp / cold_stream.CP
 
         structure_rows.append(row)
 
@@ -299,18 +419,23 @@ def export_results(results_data, hen_problem, output_dir):
         "Final_Tout_K", "Is_Target_Met"
     ]
     stream_rows = []
-    all_streams = hen_problem.hot_streams + hen_problem.cold_streams
-    for stream in all_streams:
-        final_temp = final_stream_temps.get(stream.id, stream.Tin) # Default to Tin if not in any unit
-        is_met = abs(final_temp - stream.Tout_target) < 0.1 # Tolerance for meeting target
-        stream_rows.append({
-            "Stream_ID": stream.id,
-            "Stream_Type": stream.type,
-            "Initial_Tin_K": stream.Tin,
-            "Target_Tout_K": stream.Tout_target,
-            "Final_Tout_K": final_temp,
-            "Is_Target_Met": is_met
-        })
+    final_outlet_Th_after_utility = summary_costs.get('final_outlet_Th_after_utility', [])
+    final_outlet_Tc_after_utility = summary_costs.get('final_outlet_Tc_after_utility', [])
+    
+    def append_streams(streams_list, final_outlet_after_utility, stream_rows):
+        for i, stream in enumerate(streams_list):
+            stream_rows.append({
+                "Stream_ID": stream.id,
+                "Stream_Type": stream.type,
+                "Initial_Tin_K": stream.Tin,
+                "Target_Tout_K": stream.Tout_target,
+                "Final_Tout_K": final_outlet_after_utility[i],
+                "Is_Target_Met": abs(stream.Tout_target - final_outlet_after_utility[i]) < 1e-6,
+            })
+        return stream_rows
+    
+    stream_rows = append_streams(hen_problem.hot_streams, final_outlet_Th_after_utility, stream_rows)
+    stream_rows = append_streams(hen_problem.cold_streams, final_outlet_Tc_after_utility, stream_rows)
 
     with open(stream_results_path, 'w', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=stream_headers)
@@ -319,7 +444,17 @@ def export_results(results_data, hen_problem, output_dir):
     print(f"  - Saved stream_results.csv")
 
 def export_multi_objective_results(pareto_front, output_dir):
-    """Exports the Pareto front to a CSV file."""
+    """Exports the Pareto front from a multi-objective run to a CSV file.
+
+    Parameters
+    ----------
+    pareto_front : list[dict]
+        A list of solution dictionaries, where each dictionary represents a
+        point on the Pareto front.
+    output_dir : str
+        The directory where `pareto_front_results.csv` will be saved.
+
+    """
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
     pareto_path = output_path / 'pareto_front_results.csv'
@@ -349,15 +484,31 @@ def export_multi_objective_results(pareto_front, output_dir):
     print(f"\nExported Pareto front solutions to: {pareto_path.resolve()}")
 
 def display_optimization_results(all_run_results, hen_problem_instance, model_name, output_dir=None, objective='single'):
-    """
-    Summarizes and displays the results from all optimization runs.
-    Args:
-        all_run_results (list): A list of dictionaries, where each dictionary
-                                contains results from one worker/run. Expected keys:
-                                'seed', 'costs', 'chromosome', 'details'.
-        hen_problem_instance (HENProblem): The HENProblem instance used for the optimization.
-                                          Needed to decode chromosomes and access stream names.
-        model_name (str): The name of the optimization model used (e.g., 'GA', 'TLBO').
+    """Summarizes and displays the final optimization results to the console.
+
+    This function processes results from one or more optimization runs. For
+    single-objective runs, it identifies the best overall solution, prints a
+    detailed cost breakdown, and shows the resulting network structure. For
+    multi-objective runs, it summarizes the Pareto front. It also triggers
+    the export of results to files if an output directory is provided.
+
+    Parameters
+    ----------
+    all_run_results : list[dict]
+        A list of dictionaries, where each contains results from one run.
+        Expected keys: 'seed', 'costs', 'chromosome', 'details'.
+    hen_problem_instance : HENProblem
+        The HENProblem instance used for the optimization, needed to decode
+        chromosomes and access stream data.
+    model_name : str
+        The name of the optimization model used (e.g., 'GA', 'TLBO').
+    output_dir : str, optional
+        Directory to save results files. If provided, `export_results` or
+        `export_multi_objective_results` will be called. Defaults to None.
+    objective : str, optional
+        The optimization objective type ('single' or 'multi').
+        Defaults to 'single'.
+
     """
     if objective == 'multi':
         print(f"\n--- Pareto Front Summary for NSGA-II ---")
@@ -382,8 +533,8 @@ def display_optimization_results(all_run_results, hen_problem_instance, model_na
                 print(f"Skipping invalid run result: {run_result}")
                 continue
 
-            # The key used for optimization (e.g., 'TAC_GA_optimizing' or a similar objective for TLBO)
-            objective_val = run_result['costs'].get('TAC_GA_optimizing', float('inf')) 
+            # The key used for optimization (e.g., OBJ_KEY_OPTIMIZING or a similar objective for TLBO)
+            objective_val = run_result['costs'].get(OBJ_KEY_OPTIMIZING, float('inf')) 
             true_tac_for_display = run_result['costs'].get('TAC_true_report', float('inf'))
 
             objective_val_str = f"{objective_val:.2f}" if objective_val != float('inf') else "Inf"
@@ -397,10 +548,10 @@ def display_optimization_results(all_run_results, hen_problem_instance, model_na
 
         if best_run_final_info and 'costs' in best_run_final_info and \
         best_run_final_info['costs'] is not None and \
-        best_run_final_info['costs'].get('TAC_GA_optimizing', float('inf')) != float('inf'): # Check against the optimizing TAC
+        best_run_final_info['costs'].get(OBJ_KEY_OPTIMIZING, float('inf')) != float('inf'): # Check against the optimizing TAC
             
             overall_best_true_tac_val = best_run_final_info['costs'].get('TAC_true_report', float('inf'))
-            # overall_best_ga_tac_val = best_run_final_info['costs'].get('TAC_GA_optimizing', float('inf')) # Already have this in best_overall_objective_val
+            # overall_best_ga_tac_val = best_run_final_info['costs'].get(OBJ_KEY_OPTIMIZING, float('inf')) # Already have this in best_overall_objective_val
 
             true_tac_overall_str = f"{overall_best_true_tac_val:.2f}" if overall_best_true_tac_val != float('inf') else "Inf"
             optimized_obj_overall_str = f"{best_overall_objective_val:.2f}" if best_overall_objective_val != float('inf') else "Inf"
@@ -411,7 +562,7 @@ def display_optimization_results(all_run_results, hen_problem_instance, model_na
             
             costs_to_print = best_run_final_info['costs']
             print("\nCost Breakdown for the Best Overall Solution:")
-            print(f"  True TAC: {costs_to_print.get('TAC_true_report', 0):.2f}, Optimized Obj.: {costs_to_print.get('TAC_GA_optimizing',0):.2f}")
+            print(f"  True TAC: {costs_to_print.get('TAC_true_report', 0):.2f}, Optimized Obj.: {costs_to_print.get(OBJ_KEY_OPTIMIZING,0):.2f}")
             print(f"  CapEx (Process Ex.): {costs_to_print.get('capital_process_exchangers',0):.2f}")
             print(f"  CapEx (Heaters): {costs_to_print.get('capital_heaters',0):.2f}")
             print(f"  CapEx (Coolers): {costs_to_print.get('capital_coolers',0):.2f}")
@@ -489,7 +640,7 @@ def display_optimization_results(all_run_results, hen_problem_instance, model_na
                     if detail.get('type') == 'heater':
                         heaters_count += 1
                         cold_stream_obj = hen_problem_instance.cold_streams[detail['C_idx']]
-                        print(f"     {heaters_count:2d} Heater for {cold_stream_obj.id}: Q={detail.get('Q',0):.2f} kW, Area={detail.get('Area',0):.2f} m^2, Tc_in={detail.get('Tc_in',0):.1f} K, Tc_out={detail.get('Tc_out',0):.1f} K")
+                        print(f"   {heaters_count:2d} Heater for {cold_stream_obj.id}: Q={detail.get('Q',0):.2f} kW, Area={detail.get('area',0):.2f} m^2, Tc_in={detail.get('Tc_in',0):.1f} K, Tc_out={detail.get('Tc_out',0):.1f} K")
                         Q_hot_util_op_val += detail.get('Q',0)
                 if heaters_count == 0:
                     print("    No Heaters.")
@@ -498,7 +649,7 @@ def display_optimization_results(all_run_results, hen_problem_instance, model_na
                     if detail.get('type') == 'cooler':
                         coolers_count += 1
                         hot_stream_obj = hen_problem_instance.hot_streams[detail['H_idx']]
-                        print(f"   {coolers_count:2d} Cooler for {hot_stream_obj.id}: Q={detail.get('Q',0):.2f} kW, Area={detail.get('Area',0):.2f} m^2, Th_in={detail.get('Th_in',0):.1f} K, Th_out={detail.get('Th_out',0):.1f} K")
+                        print(f"   {coolers_count:2d} Cooler for {hot_stream_obj.id}: Q={detail.get('Q',0):.2f} kW, Area={detail.get('area',0):.2f} m^2, Th_in={detail.get('Th_in',0):.1f} K, Th_out={detail.get('Th_out',0):.1f} K")
                         Q_cold_util_op_val += detail.get('Q',0)
                 if coolers_count == 0:
                     print("    No Coolers.")
@@ -521,7 +672,7 @@ def display_optimization_results(all_run_results, hen_problem_instance, model_na
             export_results(best_run_final_info, hen_problem_instance, output_dir)
 
 def display_problem_summary(hen_problem):
-    """Prints a summary of the HEN problem definition."""
+    """Prints a summary of the HEN problem definition to the console."""
     print("\n" + "="*50)
     print("HEN Problem Summary".center(50))
     print("="*50)
@@ -557,6 +708,7 @@ def display_problem_summary(hen_problem):
     print("\n" + "="*50 + "\n")
 
 def display_help():
+    """Prints the command-line interface help message and exits."""
     help_string = """usage: run_problem.py [-h] [--streams_file STREAMS_FILE] [--utilities_file UTILITIES_FILE]
                               [--matches_U_file MATCHES_U_FILE]
                               [--forbidden_matches_file FORBIDDEN_MATCHES_FILE]

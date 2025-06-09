@@ -5,13 +5,13 @@ Base optimizer module for the EPTHenOpt package.
 This module defines the `BaseOptimizer` class, which serves as the foundation
 for all optimization algorithms in the package. It encapsulates the shared
 logic for problem handling, population management, and fitness calculation,
-including the complex Sequential Workspace Synthesis (SWS) and cost evaluation.
+including the complex Stage-Wise Superstructure (SWS) and cost evaluation.
 """
 import numpy as np
 import random
 
 from .hen_models import HENProblem
-from .utils import calculate_lmtd
+from .utils import calculate_lmtd, OBJ_KEY_OPTIMIZING, OBJ_KEY_REPORT, OBJ_KEY_CO2
 
 class BaseOptimizer:
     def __init__(self, 
@@ -55,28 +55,34 @@ class BaseOptimizer:
         
         # --- State variables ---
         self.population = []
-        # For TLBO, fitnesses are often stored. GA might not need this at the class level.
-        # We can initialize it here and let TLBO use it.
         self.fitnesses = [] 
         self.details_list = []
         self.current_generation = 0
 
         # Best-so-far tracking
         self.best_chromosome_overall = None
-        self.best_costs_overall_dict = {"TAC_GA_optimizing": float('inf'), "TAC_true_report": float('inf')}
+        self.best_costs_overall_dict = {OBJ_KEY_OPTIMIZING: float('inf'), OBJ_KEY_REPORT: float('inf')}
         self.best_details_overall = None
         
-        # Initialize population (can be called by subclasses if they have specific needs first)
-        # Or, call it here directly if no pre-initialization steps are needed by subclasses.
+        # --- Pre-compute constant NumPy arrays for performance ---
+        self._hs_Tin = np.array([s.Tin for s in self.problem.hot_streams])
+        self._hs_Tout_target = np.array([s.Tout_target for s in self.problem.hot_streams])
+        self._hs_CP = np.array([s.CP for s in self.problem.hot_streams])
+
+        self._cs_Tin = np.array([s.Tin for s in self.problem.cold_streams])
+        self._cs_Tout_target = np.array([s.Tout_target for s in self.problem.cold_streams])
+        self._cs_CP = np.array([s.CP for s in self.problem.cold_streams])
+        
+        # This initial array can also be pre-computed
+        self._initial_T_mix_H = np.array([[s.Tin for _ in range(self.problem.num_stages)] for s in self.problem.hot_streams])
+        self._initial_T_mix_C = np.array([[s.Tin for _ in range(self.problem.num_stages)] for s in self.problem.cold_streams])
+
         self._initialize_population()
 
     def _initialize_population(self):
         self.population = []
         for _ in range(self.population_size):
             self.population.append(self._create_random_full_chromosome())
-        # If fitnesses are needed for all individuals at initialization (e.g., TLBO)
-        # this would be the place to call _evaluate_population or similar.
-        # For now, let TLBO handle its initial fitness evaluation.
 
     def _create_random_full_chromosome(self):
         z_part = np.random.randint(0, 2, size=self.len_Z)
@@ -85,415 +91,492 @@ class BaseOptimizer:
         return np.concatenate((z_part, r_hot_part, r_cold_part))
 
     def _decode_chromosome(self, chromosome):
-        # Delegate to the problem instance, which knows its structure
         return self.problem._decode_chromosome(chromosome)
 
+    # --- REFACTORED FITNESS CALCULATION ---
+
     def _calculate_fitness(self, chromosome):
-        # This entire long method is moved from ga_helpers.py / tlbo_helpers.py
-        # Ensure all necessary self.problem attributes are accessed correctly.
-        Z_ijk, R_hot_splits, R_cold_splits = self._decode_chromosome(chromosome)
+        """
+        Orchestrates the multi-step process of evaluating a chromosome's fitness (cost).
+        This method acts as a high-level story, delegating specific tasks to helper methods.
+        """
+        Z_ijk, R_hot, R_cold = self._decode_chromosome(chromosome)
+        adaptive_penalty = self._get_adaptive_penalty()
+
+        # 1. Check for hard constraint violations that warrant a "death penalty"
+        if self.problem.no_split and self._check_no_split_violation(Z_ijk):
+            return self._create_death_penalty_costs("no_split", adaptive_penalty), []
+
+        # 2. Calculate heat recovery network performance using SWS
+        FH_ijk, FC_ijk = self._calculate_split_fractions(Z_ijk, R_hot, R_cold)
+        sws_results = self._perform_sws(Z_ijk, FH_ijk, FC_ijk)
+        if not sws_results['converged']:
+            return self._create_death_penalty_costs("SWS_non_convergence", adaptive_penalty), []
+
+        # 3. Calculate costs and penalties for the heat recovery section
+        proc_ex_costs, proc_ex_details = self._calculate_process_exchanger_costs(
+            Z_ijk, sws_results, FH_ijk, FC_ijk, adaptive_penalty
+        )
         
-        # --- 1. Adaptive Penalty Calculation ---
-        # The penalty factor grows from initial to final value as generations progress.
+        # 4. Assign and cost utilities (heaters and coolers)
+        util_costs, util_details, final_temps = self._assign_utilities_and_cost(
+            sws_results['final_Th_after_recovery'], 
+            sws_results['final_Tc_after_recovery'], 
+            adaptive_penalty
+        )
+        all_exchanger_details = proc_ex_details + util_details
+
+        # 5. Calculate all other penalties based on the final network configuration
+        final_penalties = self._calculate_final_penalties(
+            Z_ijk, sws_results['Q_ijk'], final_temps, 
+            util_costs['Q_hot_consumed'], util_costs['Q_cold_consumed'], 
+            adaptive_penalty
+        )
+
+        # 6. Aggregate all costs and penalties into a final dictionary
+        all_costs = {**proc_ex_costs, **util_costs}
+        all_penalties = {**final_penalties, "penalty_EMAT_etc": proc_ex_costs['penalty_EMAT_etc'], "penalty_unmet_targets": util_costs['penalty_unmet_targets']}
+
+        final_cost_dict = self._aggregate_costs(all_costs, all_penalties, final_temps)
+        
+        return final_cost_dict, all_exchanger_details
+
+    def _get_adaptive_penalty(self):
+        """Calculates the penalty factor, which scales with the generation number."""
         gen_ratio = min(1.0, self.current_generation / self.generations if self.generations > 0 else 1.0)
-        adaptive_penalty_factor = self.initial_penalty + (self.final_penalty - self.initial_penalty) * gen_ratio
+        return self.initial_penalty + (self.final_penalty - self.initial_penalty) * gen_ratio
 
-        NH = self.problem.NH
-        NC = self.problem.NC
-        ST = self.problem.num_stages
-        EMAT = getattr(self.problem.cost_params, 'EMAT', 10.0)
-
-        capital_cost_process_exchangers = 0.0
-        capital_cost_heaters = 0.0
-        capital_cost_coolers = 0.0
-        annual_hot_utility_op_cost = 0.0
-        annual_cold_utility_op_cost = 0.0
-        penalty_EMAT = 0.0
-        penalty_unmet_targets = 0.0
-        penalty_pinch_deviation = 0.0
-        
-        exchanger_details_list = []
-
-        # --- 1. Determine Actual Split Fractions (FH_ijk, FC_ijk) ---
-        FH_ijk = np.zeros((NH, NC, ST)) 
-        FC_ijk = np.zeros((NH, NC, ST)) 
-
-        for k_stage_split_loop in range(ST):
-            for i_hot_split_loop in range(NH):
-                active_cold_targets_indices = [j_cold_target for j_cold_target in range(NC) if Z_ijk[i_hot_split_loop, j_cold_target, k_stage_split_loop] == 1]
-                num_active_hot_branches = len(active_cold_targets_indices)
-                if num_active_hot_branches == 1: 
-                    FH_ijk[i_hot_split_loop, active_cold_targets_indices[0], k_stage_split_loop] = 1.0
-                elif num_active_hot_branches > 1:
-                    raw_r_values = R_hot_splits[i_hot_split_loop, k_stage_split_loop, active_cold_targets_indices]
-                    sum_r = np.sum(raw_r_values)
-                    if sum_r > 1e-6:
-                        normalized_r = raw_r_values / sum_r
-                        for idx, j_cold_actual_target_idx in enumerate(active_cold_targets_indices): 
-                            FH_ijk[i_hot_split_loop, j_cold_actual_target_idx, k_stage_split_loop] = normalized_r[idx]
-                    elif active_cold_targets_indices: 
-                        for j_cold_actual_target_idx in active_cold_targets_indices: 
-                            FH_ijk[i_hot_split_loop, j_cold_actual_target_idx, k_stage_split_loop] = 1.0 / num_active_hot_branches
-            
-            for j_cold_split_loop in range(NC):
-                active_hot_sources_indices = [i_hot_source for i_hot_source in range(NH) if Z_ijk[i_hot_source, j_cold_split_loop, k_stage_split_loop] == 1]
-                num_active_cold_branches = len(active_hot_sources_indices)
-                if num_active_cold_branches == 1: 
-                    FC_ijk[active_hot_sources_indices[0], j_cold_split_loop, k_stage_split_loop] = 1.0
-                elif num_active_cold_branches > 1:
-                    raw_r_values = R_cold_splits[j_cold_split_loop, k_stage_split_loop, active_hot_sources_indices]
-                    sum_r = np.sum(raw_r_values)
-                    if sum_r > 1e-6:
-                        normalized_r = raw_r_values / sum_r
-                        for idx, i_hot_actual_source_idx in enumerate(active_hot_sources_indices): 
-                            FC_ijk[i_hot_actual_source_idx, j_cold_split_loop, k_stage_split_loop] = normalized_r[idx]
-                    elif active_hot_sources_indices: 
-                        for i_hot_actual_source_idx in active_hot_sources_indices: 
-                            FC_ijk[i_hot_actual_source_idx, j_cold_split_loop, k_stage_split_loop] = 1.0 / num_active_cold_branches
-
-        # --- 2. SWS Temperature Iteration Loop ---
-        Q_ijk_converged = np.zeros((NH, NC, ST))
-        T_mix_H_outlet_current_sws = np.array([[hs.Tin for _ in range(ST)] for hs in self.problem.hot_streams])
-        T_mix_C_outlet_current_sws = np.array([[cs.Tin for _ in range(ST)] for cs in self.problem.cold_streams])
-        T_mix_H_outlet_prev_sws_iter = T_mix_H_outlet_current_sws.copy()
-        T_mix_C_outlet_prev_sws_iter = T_mix_C_outlet_current_sws.copy()
-        
-        sws_converged = False
-
-        for sws_iter_count in range(self.sws_max_iter):
-            T_mix_H_for_convergence_check = T_mix_H_outlet_current_sws.copy()
-            T_mix_C_for_convergence_check = T_mix_C_outlet_current_sws.copy()
-            Q_ijk_this_sws_iter_pass = np.zeros((NH, NC, ST))
-
-            for k_stage_loop in range(ST):
-                TinH_overall_to_stage_k_matches = np.zeros(NH)
-                for i_hot_idx in range(NH):
-                    TinH_overall_to_stage_k_matches[i_hot_idx] = T_mix_H_outlet_prev_sws_iter[i_hot_idx, k_stage_loop-1] if k_stage_loop > 0 else self.problem.hot_streams[i_hot_idx].Tin
-                Q_total_from_hot_stream_at_stage_k = np.zeros(NH)
-                for i_hot_idx in range(NH):
-                    hs = self.problem.hot_streams[i_hot_idx]
-                    TinH_for_hs_branches_in_stage_k = TinH_overall_to_stage_k_matches[i_hot_idx]
-                    for j_cold_idx in range(NC):
-                        cs = self.problem.cold_streams[j_cold_idx]
-                        if Z_ijk[i_hot_idx, j_cold_idx, k_stage_loop] == 1:
-                            Tcin_for_cs_branch_in_stage_k = T_mix_C_outlet_prev_sws_iter[j_cold_idx, k_stage_loop+1] if k_stage_loop < ST-1 else cs.Tin
-                            CPH_b = hs.CP * FH_ijk[i_hot_idx, j_cold_idx, k_stage_loop]
-                            CPC_b = cs.CP * FC_ijk[i_hot_idx, j_cold_idx, k_stage_loop]
-                            Q_m = 0 
-                            if CPH_b > 1e-9 and CPC_b > 1e-9:
-                                Q_H_target_limit = CPH_b * (TinH_for_hs_branches_in_stage_k - hs.Tout_target)
-                                Q_H_EMAT_limit   = CPH_b * (TinH_for_hs_branches_in_stage_k - (Tcin_for_cs_branch_in_stage_k + EMAT))
-                                Q_C_target_limit = CPC_b * (cs.Tout_target - Tcin_for_cs_branch_in_stage_k)
-                                Q_C_EMAT_limit   = CPC_b * ((TinH_for_hs_branches_in_stage_k - EMAT) - Tcin_for_cs_branch_in_stage_k)
-                                Q_m = max(0, min(Q_H_target_limit, Q_H_EMAT_limit, Q_C_target_limit, Q_C_EMAT_limit))
-                            Q_ijk_this_sws_iter_pass[i_hot_idx, j_cold_idx, k_stage_loop] = Q_m
-                            Q_total_from_hot_stream_at_stage_k[i_hot_idx] += Q_m
-                for i_hot_mixer_idx in range(NH):
-                    hs_m = self.problem.hot_streams[i_hot_mixer_idx]
-                    if hs_m.CP > 1e-9:
-                        T_mix_H_outlet_current_sws[i_hot_mixer_idx, k_stage_loop] = TinH_overall_to_stage_k_matches[i_hot_mixer_idx] - Q_total_from_hot_stream_at_stage_k[i_hot_mixer_idx] / hs_m.CP
-                    else:
-                        T_mix_H_outlet_current_sws[i_hot_mixer_idx, k_stage_loop] = TinH_overall_to_stage_k_matches[i_hot_mixer_idx]
-
-            for k_stage_loop in range(ST - 1, -1, -1):
-                TinC_overall_to_stage_k_matches = np.zeros(NC)
-                for j_cs_idx in range(NC):
-                    TinC_overall_to_stage_k_matches[j_cs_idx] = T_mix_C_outlet_prev_sws_iter[j_cs_idx, k_stage_loop+1] if k_stage_loop < ST-1 else self.problem.cold_streams[j_cs_idx].Tin
-                Q_total_to_cold_stream_at_stage_k = np.zeros(NC)
-                for j_cold_idx in range(NC):
-                    for i_hot_idx in range(NH):
-                        if Z_ijk[i_hot_idx, j_cold_idx, k_stage_loop] == 1:
-                            Q_total_to_cold_stream_at_stage_k[j_cold_idx] += Q_ijk_this_sws_iter_pass[i_hot_idx,j_cold_idx,k_stage_loop]
-                for j_cold_mixer_idx in range(NC):
-                    cs_m = self.problem.cold_streams[j_cold_mixer_idx]
-                    if cs_m.CP > 1e-9:
-                        T_mix_C_outlet_current_sws[j_cold_mixer_idx, k_stage_loop] = TinC_overall_to_stage_k_matches[j_cold_mixer_idx] + Q_total_to_cold_stream_at_stage_k[j_cold_mixer_idx] / cs_m.CP
-                    else:
-                        T_mix_C_outlet_current_sws[j_cold_mixer_idx, k_stage_loop] = TinC_overall_to_stage_k_matches[j_cold_mixer_idx]
-
-            delta_H_conv = np.max(np.abs(T_mix_H_for_convergence_check - T_mix_H_outlet_current_sws)) if NH > 0 and ST > 0 else 0
-            delta_C_conv = np.max(np.abs(T_mix_C_for_convergence_check - T_mix_C_outlet_current_sws)) if NC > 0 and ST > 0 else 0
-            T_mix_H_outlet_prev_sws_iter = T_mix_H_outlet_current_sws.copy()
-            T_mix_C_outlet_prev_sws_iter = T_mix_C_outlet_current_sws.copy()
-            Q_ijk_converged = Q_ijk_this_sws_iter_pass.copy() 
-            if delta_H_conv < self.sws_conv_tol and delta_C_conv < self.sws_conv_tol and sws_iter_count > 0:
-                sws_converged = True
-                break
-        
-        # --- ADDED: Early Exit on SWS Failure ---
-        # If the loop finished without converging, this chromosome is invalid.
-        # Return a high penalty immediately to save computation.
-        if not sws_converged:
-            failed_costs = {
-                "TAC_GA_optimizing": adaptive_penalty_factor * 1e3, # High penalty
-                "TAC_true_report": float('inf'),
-                "penalty_SWS_non_convergence": adaptive_penalty_factor * 1e3,
-            }
-            # Return empty details list and the failure cost dictionary
-            return {k: v for k, v in failed_costs.items() if v != 0}, []
-
-        # --- Stage 3 & 4: Exchanger Area/Cost and Utility Calculations ---
-        for k_idx_final_cost_loop in range(ST):
-            for i_idx_final_cost_loop in range(NH):
-                hs_final = self.problem.hot_streams[i_idx_final_cost_loop]
-                for j_idx_final_cost_loop in range(NC):
-                    cs_final = self.problem.cold_streams[j_idx_final_cost_loop]
-                    if Z_ijk[i_idx_final_cost_loop, j_idx_final_cost_loop, k_idx_final_cost_loop] == 1 and \
-                       Q_ijk_converged[i_idx_final_cost_loop, j_idx_final_cost_loop, k_idx_final_cost_loop] > 1e-6:
-                        Q_final_ex = Q_ijk_converged[i_idx_final_cost_loop, j_idx_final_cost_loop, k_idx_final_cost_loop]
-                        Th_in_final_ex = T_mix_H_outlet_current_sws[i_idx_final_cost_loop, k_idx_final_cost_loop-1] if k_idx_final_cost_loop > 0 else hs_final.Tin
-                        Tc_in_final_ex = T_mix_C_outlet_current_sws[j_idx_final_cost_loop, k_idx_final_cost_loop+1] if k_idx_final_cost_loop < ST-1 else cs_final.Tin
-                        CPH_b_final_ex = hs_final.CP * FH_ijk[i_idx_final_cost_loop, j_idx_final_cost_loop, k_idx_final_cost_loop]
-                        CPC_b_final_ex = cs_final.CP * FC_ijk[i_idx_final_cost_loop, j_idx_final_cost_loop, k_idx_final_cost_loop]
-                        if CPH_b_final_ex < 1e-9 or CPC_b_final_ex < 1e-9: continue
-                        Th_out_final_ex = Th_in_final_ex - Q_final_ex / CPH_b_final_ex
-                        Tc_out_final_ex = Tc_in_final_ex + Q_final_ex / CPC_b_final_ex
-                        dTa_final = Th_in_final_ex - Tc_out_final_ex
-                        dTb_final = Th_out_final_ex - Tc_in_final_ex
-                        if dTa_final < EMAT - 1e-3: penalty_EMAT += adaptive_penalty_factor * max(0, EMAT - dTa_final) # Ensure positive or zero
-                        if dTb_final < EMAT - 1e-3: penalty_EMAT += adaptive_penalty_factor * max(0, EMAT - dTb_final)
-                        lmtd_final_ex = calculate_lmtd(float(Th_in_final_ex), float(Th_out_final_ex), float(Tc_in_final_ex), float(Tc_out_final_ex))
-                        U_final_ex = self.problem.U_matrix_process[i_idx_final_cost_loop, j_idx_final_cost_loop]
-                        area_final_ex = 1e9
-                        if U_final_ex > 1e-9 and lmtd_final_ex > 1e-9 : area_final_ex = Q_final_ex / (U_final_ex * lmtd_final_ex)
-                        if area_final_ex < 0: area_final_ex = 1e9
-                        CF_process_val = self.problem.fixed_cost_process_exchangers[i_idx_final_cost_loop,j_idx_final_cost_loop]
-                        C_area_process_val = self.problem.area_cost_process_coeff[i_idx_final_cost_loop,j_idx_final_cost_loop]
-                        B_exp_process_val = self.problem.area_cost_process_exp[i_idx_final_cost_loop,j_idx_final_cost_loop]
-                        cost_ex_final = CF_process_val + C_area_process_val * (area_final_ex ** B_exp_process_val)
-                        capital_cost_process_exchangers += cost_ex_final
-                        exchanger_details_list.append({'H': i_idx_final_cost_loop, 'C': j_idx_final_cost_loop, 'k': k_idx_final_cost_loop, 
-                                                       'Q': Q_final_ex, 'Area': area_final_ex, 
-                                                       'Th_in': Th_in_final_ex, 'Th_out': Th_out_final_ex, 
-                                                       'Tc_in': Tc_in_final_ex, 'Tc_out': Tc_out_final_ex})
-        
-        final_Th_after_sws_recovery = np.array([hs.Tin for hs in self.problem.hot_streams]) if ST == 0 else T_mix_H_outlet_current_sws[:, ST-1]
-        final_Tc_after_sws_recovery = np.array([cs.Tin for cs in self.problem.cold_streams]) if ST == 0 else T_mix_C_outlet_current_sws[:, 0]
-        
-        target_temp_penalty_factor = 1e9 
-        temp_tolerance = 0.001
-        Q_hot_consumed_kW_actual = 0.0
-        Q_cold_consumed_kW_actual = 0.0
-        final_outlet_Th_after_utility = final_Th_after_sws_recovery.copy()
-        final_outlet_Tc_after_utility = final_Tc_after_sws_recovery.copy()
-
-        Q_cold_HS_required = np.zeros(NH)
-        Q_hot_CS_required = np.zeros(NC)
-        
-        for i_hot_idx in range(NH):
-            hs = self.problem.hot_streams[i_hot_idx]
-            Q_total_recovered_for_hs = np.sum(Q_ijk_converged[i_hot_idx, :, :])
-            Q_cold_HS_required[i_hot_idx] = max(0, hs.CP * (hs.Tin - hs.Tout_target) - Q_total_recovered_for_hs)
-
-        for j_cold_idx in range(NC):
-            cs = self.problem.cold_streams[j_cold_idx]
-            Q_total_recovered_for_cs = np.sum(Q_ijk_converged[:, j_cold_idx, :])
-            Q_hot_CS_required[j_cold_idx] = max(0, cs.CP * (cs.Tout_target - cs.Tin) - Q_total_recovered_for_cs)
-
-        # Utility assignment logic (coolers for hot streams)
-        annual_co2_cold_utility = 0
-        annual_co2_hot_utility = 0
-        
-        if self.problem.cold_utility:
-            for i_hot_util_loop in range(NH):
-                hs_util = self.problem.hot_streams[i_hot_util_loop]
-                temp_before_cu = final_Th_after_sws_recovery[i_hot_util_loop]
-                # Q_cooler_needed should be calculated based on remaining duty to reach target
-                Q_cooler_needed = hs_util.CP * (temp_before_cu - hs_util.Tout_target)
-
-                if Q_cooler_needed > 1e-6 and hs_util.CP > 1e-9:
-                    best_cu_obj_for_this_need = None
-                    min_incremental_cost_for_this_cooler = float('inf')
-                    best_cooler_capital_cost = 0; best_cooler_op_cost_for_this_Q = 0; best_cooler_details = {}
-
-                    for cu_candidate in self.problem.cold_utility:
-                        # --- ADDED: Check for forbidden utility match ---
-                        is_forbidden = False
-                        if self.problem.forbidden_matches:
-                            for forbidden in self.problem.forbidden_matches:
-                                if forbidden.get('hot') == hs_util.id and forbidden.get('cold') == cu_candidate.id:
-                                    is_forbidden = True
-                                    break
-                        if is_forbidden:
-                            continue # Skip this forbidden utility
-                        
-                        Th_in_cu = temp_before_cu; Th_out_cu = hs_util.Tout_target
-                        Tc_in_cu_u = cu_candidate.Tin
-                        Tc_out_cu_u = cu_candidate.Tout if cu_candidate.Tout is not None and cu_candidate.Tout > Tc_in_cu_u else Tc_in_cu_u + 5 # Ensure positive delta T for utility
-                        
-                        emat_ok_cu = True
-                        if Th_in_cu < Tc_out_cu_u + EMAT - 1e-3: emat_ok_cu = False
-                        if Th_out_cu < Tc_in_cu_u + EMAT - 1e-3: emat_ok_cu = False
-                        if Th_out_cu < Th_in_cu: # Check if cooling is possible
-                            lmtd_cu_u = calculate_lmtd(Th_in_cu, Th_out_cu, Tc_in_cu_u, Tc_out_cu_u)
-                            U_cu_u = cu_candidate.U 
-                            area_cu_u = 1e9
-                            if U_cu_u > 1e-9 and lmtd_cu_u > 1e-9: area_cu_u = Q_cooler_needed / (U_cu_u * lmtd_cu_u)
-                            if area_cu_u < 0: area_cu_u = 1e9
-                            
-                            current_cooler_capital = cu_candidate.fix_cost + cu_candidate.area_cost_coeff * (area_cu_u ** cu_candidate.area_cost_exp)
-                            current_cooler_op = cu_candidate.cost * Q_cooler_needed
-                            current_total_impact_cu = current_cooler_capital + current_cooler_op
-
-                            if emat_ok_cu and current_total_impact_cu < min_incremental_cost_for_this_cooler:
-                                min_incremental_cost_for_this_cooler = current_total_impact_cu
-                                best_cu_obj_for_this_need = cu_candidate
-                                best_cooler_capital_cost = current_cooler_capital
-                                best_cooler_op_cost_for_this_Q = current_cooler_op
-                                best_cooler_details = {'type': 'cooler', 'H_idx': i_hot_util_loop, 'Q': Q_cooler_needed, 
-                                                       'Area': area_cu_u, 'Th_in': Th_in_cu, 'Th_out': Th_out_cu, 
-                                                       'util_Tin': Tc_in_cu_u, 'util_Tout':Tc_out_cu_u, 'Util_ID': cu_candidate.id}
-                        else: # Cooling not possible or EMAT violation
-                            pass # Or add penalty if this utility was the only option and target not met
-                    
-                    if best_cu_obj_for_this_need:
-                        Q_cold_consumed_kW_actual += Q_cooler_needed
-                        capital_cost_coolers += best_cooler_capital_cost
-                        annual_cold_utility_op_cost += best_cooler_op_cost_for_this_Q
-                        exchanger_details_list.append(best_cooler_details)
-                        final_outlet_Th_after_utility[i_hot_util_loop] = hs_util.Tout_target
-                        annual_co2_cold_utility += Q_cooler_needed * best_cu_obj_for_this_need.co2_factor
-                    elif Q_cooler_needed > 1e-6 : # If cooling was needed but no suitable utility found
-                        penalty_unmet_targets += target_temp_penalty_factor * Q_cooler_needed
-
-        # Utility assignment logic (heaters for cold streams)
-        if self.problem.hot_utility:
-            for j_cold_util_loop in range(NC):
-                cs_util = self.problem.cold_streams[j_cold_util_loop]
-                temp_before_hu = final_Tc_after_sws_recovery[j_cold_util_loop]
-                # Q_heater_val should be calculated based on remaining duty
-                Q_heater_val = cs_util.CP * (cs_util.Tout_target - temp_before_hu)
-
-                if Q_heater_val > 1e-6 and cs_util.CP > 1e-9:
-                    best_hu_obj_for_this_need = None
-                    min_incremental_cost_for_this_heater = float('inf')
-                    best_heater_capital_cost = 0; best_heater_op_cost_for_this_Q = 0; best_heater_details = {}
-                    
-                    for hu_candidate in self.problem.hot_utility:
-                        # --- ADDED: Check for forbidden utility match ---
-                        is_forbidden = False
-                        if self.problem.forbidden_matches:
-                            for forbidden in self.problem.forbidden_matches:
-                                if forbidden.get('hot') == hu_candidate.id and forbidden.get('cold') == cs_util.id:
-                                    is_forbidden = True
-                                    break
-                        if is_forbidden:
-                            continue # Skip this forbidden utility
-                        
-                        Tc_in_hu_u = temp_before_hu; Tc_out_hu_u = cs_util.Tout_target
-                        Th_in_hu_u = hu_candidate.Tin
-                        Th_out_hu_u = hu_candidate.Tout if hu_candidate.Tout is not None and hu_candidate.Tout < Th_in_hu_u else Th_in_hu_u - 5 # Ensure positive delta T
-                        
-                        emat_ok_hu = True
-                        if Th_in_hu_u < Tc_out_hu_u + EMAT - 1e-3: emat_ok_hu = False
-                        if Th_out_hu_u < Tc_in_hu_u + EMAT - 1e-3: emat_ok_hu = False
-
-                        if Tc_out_hu_u > Tc_in_hu_u: # Check if heating is possible
-                            lmtd_hu_u = calculate_lmtd(Th_in_hu_u, Th_out_hu_u, Tc_in_hu_u, Tc_out_hu_u)
-                            U_hu_u = hu_candidate.U
-                            area_hu_u = 1e9
-                            if U_hu_u > 1e-9 and lmtd_hu_u > 1e-9: area_hu_u = Q_heater_val / (U_hu_u * lmtd_hu_u)
-                            if area_hu_u < 0: area_hu_u = 1e9
-                            
-                            current_heater_capital = hu_candidate.fix_cost + hu_candidate.area_cost_coeff * (area_hu_u ** hu_candidate.area_cost_exp)
-                            current_heater_op = hu_candidate.cost * Q_heater_val
-                            current_total_impact_hu = current_heater_capital + current_heater_op
-
-                            if emat_ok_hu and current_total_impact_hu < min_incremental_cost_for_this_heater:
-                                min_incremental_cost_for_this_heater = current_total_impact_hu
-                                best_hu_obj_for_this_need = hu_candidate
-                                best_heater_capital_cost = current_heater_capital
-                                best_heater_op_cost_for_this_Q = current_heater_op
-                                best_heater_details = {'type': 'heater', 'C_idx': j_cold_util_loop, 'Q': Q_heater_val, 
-                                                    'Area': area_hu_u, 'Tc_in': Tc_in_hu_u, 'Tc_out': Tc_out_hu_u,
-                                                    'util_Tin':Th_in_hu_u, 'util_Tout':Th_out_hu_u, 'Util_ID': hu_candidate.id}
-                        else: # Heating not possible or EMAT violation
-                            pass
-
-                    if best_hu_obj_for_this_need:
-                        Q_hot_consumed_kW_actual += Q_heater_val
-                        capital_cost_heaters += best_heater_capital_cost
-                        annual_hot_utility_op_cost += best_heater_op_cost_for_this_Q
-                        exchanger_details_list.append(best_heater_details)
-                        final_outlet_Tc_after_utility[j_cold_util_loop] = cs_util.Tout_target
-                        annual_co2_hot_utility += Q_heater_val * best_hu_obj_for_this_need.co2_factor
-                    elif Q_heater_val > 1e-6: # If heating was needed but no suitable utility found
-                         penalty_unmet_targets += target_temp_penalty_factor * Q_heater_val
-        
-        # Final Target Check
-        for i_target_check in range(NH):
-            hs_target = self.problem.hot_streams[i_target_check]
-            if abs(final_outlet_Th_after_utility[i_target_check] - hs_target.Tout_target) > temp_tolerance:
-                penalty_unmet_targets += adaptive_penalty_factor * abs(final_outlet_Th_after_utility[i_target_check] - hs_target.Tout_target)
-        for j_target_check in range(NC):
-            cs_target = self.problem.cold_streams[j_target_check]
-            if abs(final_outlet_Tc_after_utility[j_target_check] - cs_target.Tout_target) > temp_tolerance:
-                penalty_unmet_targets += adaptive_penalty_factor * abs(final_outlet_Tc_after_utility[j_target_check] - cs_target.Tout_target)
-
-        # Pinch Deviation Penalty
-        if hasattr(self.problem, 'Q_H_min_pinch') and self.problem.Q_H_min_pinch is not None:
-            if Q_hot_consumed_kW_actual > self.problem.Q_H_min_pinch + 1e-3 : penalty_pinch_deviation += self.pinch_deviation_penalty_factor * (Q_hot_consumed_kW_actual - self.problem.Q_H_min_pinch)
-        if hasattr(self.problem, 'Q_C_min_pinch') and self.problem.Q_C_min_pinch is not None:
-            if Q_cold_consumed_kW_actual > self.problem.Q_C_min_pinch + 1e-3: penalty_pinch_deviation += self.pinch_deviation_penalty_factor * (Q_cold_consumed_kW_actual - self.problem.Q_C_min_pinch)
-        
-        # Forbidden and Required Match Penalties
-        forbidden_matches_penalty = 0
-        if self.problem.forbidden_matches: # Assuming it's a list of dicts like {'hot': 'H1', 'cold': 'C1'}
-            for Z_row_idx, Z_col_idx, Z_stage_idx in np.argwhere(Z_ijk == 1):
-                hot_stream_id = self.problem.hot_streams[Z_row_idx].id
-                cold_stream_id = self.problem.cold_streams[Z_col_idx].id
-                for forbidden in self.problem.forbidden_matches:
-                    if forbidden['hot'] == hot_stream_id and forbidden['cold'] == cold_stream_id:
-                        forbidden_matches_penalty += adaptive_penalty_factor # Significant penalty
-                        break 
-        
-        required_matches_penalty = 0
-        if self.problem.required_matches: # Assuming list of dicts like {'hot': 'H1', 'cold': 'C1', 'min_Q_total': 100}
-            for required in self.problem.required_matches:
-                match_found_and_met = False
-                for Z_row_idx, Z_col_idx, Z_stage_idx in np.argwhere(Z_ijk == 1): # Iterate active matches
-                    hot_stream_id = self.problem.hot_streams[Z_row_idx].id
-                    cold_stream_id = self.problem.cold_streams[Z_col_idx].id
-                    if required['hot'] == hot_stream_id and required['cold'] == cold_stream_id:
-                        # Sum Q over all stages for this H-C pair
-                        Q_total_for_pair = np.sum(Q_ijk_converged[Z_row_idx, Z_col_idx, :])
-                        if Q_total_for_pair >= required.get('min_Q_total', 1e-6): # Use a default min_Q if not specified
-                            match_found_and_met = True
-                            break 
-                if not match_found_and_met:
-                    required_matches_penalty += adaptive_penalty_factor # Significant penalty if required match not met
-
-        total_annual_capital_cost = capital_cost_process_exchangers + capital_cost_heaters + capital_cost_coolers
-        total_annual_operating_cost = annual_hot_utility_op_cost + annual_cold_utility_op_cost
-        
-        # Ensure total_penalty_applied_to_ga is a sum of non-negative values
-        penalties_sum = sum(p for p in [penalty_EMAT, penalty_unmet_targets, penalty_pinch_deviation, forbidden_matches_penalty, required_matches_penalty] if p > 0)
-
-        TAC_for_GA = total_annual_capital_cost + (total_annual_operating_cost * self.utility_cost_factor) + penalties_sum
-        true_TAC_report = total_annual_capital_cost + total_annual_operating_cost + sum(p for p in [penalty_EMAT, penalty_unmet_targets] if p > 0) # True TAC usually includes unavoidable penalties like EMAT violations
-        
-        total_co2 = annual_co2_hot_utility + annual_co2_cold_utility
-        
-        detailed_costs = {
-            "TAC_GA_optimizing": TAC_for_GA, "TAC_true_report": true_TAC_report,
-            "capital_process_exchangers": capital_cost_process_exchangers, 
-            "capital_heaters": capital_cost_heaters,
-            "capital_coolers": capital_cost_coolers, 
-            "op_cost_hot_utility": annual_hot_utility_op_cost,
-            "op_cost_cold_utility": annual_cold_utility_op_cost, 
-            "total_capital_cost": total_annual_capital_cost,
-            "total_operating_cost": total_annual_operating_cost, 
-            "penalty_EMAT_etc": penalty_EMAT, # Renamed for clarity in previous versions
-            "penalty_unmet_targets": penalty_unmet_targets, 
-            "penalty_pinch_deviation": penalty_pinch_deviation,
-            "penalty_forbidden_matches": forbidden_matches_penalty,
-            "penalty_required_matches": required_matches_penalty,
-            "penalty_total_in_GA_TAC": penalties_sum,
-            "Q_hot_consumed_kW_actual": Q_hot_consumed_kW_actual,
-            "Q_cold_consumed_kW_actual": Q_cold_consumed_kW_actual,
-            "total_co2_emissions": total_co2,
+    def _create_death_penalty_costs(self, reason, adaptive_penalty):
+        """Returns a cost dictionary with a massive penalty for fatal errors."""
+        penalty_value = adaptive_penalty * 1e6
+        return {
+            OBJ_KEY_OPTIMIZING: penalty_value,
+            OBJ_KEY_REPORT: float('inf'),
+            f"penalty_{reason}": penalty_value,
         }
-        return detailed_costs, exchanger_details_list
+
+    def _check_no_split_violation(self, Z_ijk):
+        """Checks if the no-split constraint is violated."""
+        NH, NC, ST = self.problem.NH, self.problem.NC, self.problem.num_stages
+        for i in range(NH):
+            for k in range(ST):
+                if np.sum(Z_ijk[i, :, k]) > 1:
+                    return True
+        for j in range(NC):
+            for k in range(ST):
+                if np.sum(Z_ijk[:, j, k]) > 1:
+                    return True
+        return False
+
+    def _calculate_split_fractions(self, Z_ijk, R_hot_splits, R_cold_splits):
+        """Calculates the actual split fractions FH_ijk and FC_ijk."""
+        NH, NC, ST = self.problem.NH, self.problem.NC, self.problem.num_stages
+        FH_ijk = np.zeros((NH, NC, ST))
+        FC_ijk = np.zeros((NH, NC, ST))
+
+        for k in range(ST):
+            # Hot stream splits
+            for i in range(NH):
+                active_indices = np.where(Z_ijk[i, :, k] == 1)[0]
+                num_active = len(active_indices)
+                if num_active == 1:
+                    FH_ijk[i, active_indices[0], k] = 1.0
+                elif num_active > 1:
+                    raw_r = R_hot_splits[i, k, active_indices]
+                    sum_r = np.sum(raw_r)
+                    if sum_r > 1e-6:
+                        FH_ijk[i, active_indices, k] = raw_r / sum_r
+                    else:
+                        FH_ijk[i, active_indices, k] = 1.0 / num_active
+            
+            # Cold stream splits
+            for j in range(NC):
+                active_indices = np.where(Z_ijk[:, j, k] == 1)[0]
+                num_active = len(active_indices)
+                if num_active == 1:
+                    FC_ijk[active_indices[0], j, k] = 1.0
+                elif num_active > 1:
+                    raw_r = R_cold_splits[j, k, active_indices]
+                    sum_r = np.sum(raw_r)
+                    if sum_r > 1e-6:
+                        FC_ijk[active_indices, j, k] = raw_r / sum_r
+                    else:
+                        FC_ijk[active_indices, j, k] = 1.0 / num_active
+        return FH_ijk, FC_ijk
+
+    def _perform_sws(self, Z_ijk, FH_ijk, FC_ijk):
+        """
+        Performs the Sequential Workspace Synthesis (SWS) calculation.
+        Returns a dictionary with converged results or a failure flag.
+        """
+        NH, NC, ST = self.problem.NH, self.problem.NC, self.problem.num_stages
+        
+        if NH * NC * ST >= 100:
+            return self._perform_sws_np(Z_ijk, FH_ijk, FC_ijk)
+        else:
+            return self._perform_sws_loop(Z_ijk, FH_ijk, FC_ijk)
+
+    # In base_optimizer.py
+
+    def _perform_sws_np(self, Z_ijk, FH_ijk, FC_ijk):
+        """Performs the Sequential Workspace Synthesis (SWS) calculation.
+
+        This is a highly optimized and vectorized implementation that uses
+        pre-computed stream property arrays to minimize overhead.
+        """
+        # 1. Initialization and Guard Clauses
+        # ------------------------------------
+        NH, NC, ST = self.problem.NH, self.problem.NC, self.problem.num_stages
+        EMAT = self.problem.cost_params.EMAT
+
+        if NH == 0 or NC == 0:
+            return {
+                "converged": True, "Q_ijk": np.zeros((NH, NC, ST)), 
+                "T_mix_H": np.empty((NH, ST)), "T_mix_C": np.empty((NC, ST)),
+                "final_Th_after_recovery": self._hs_Tin,
+                "final_Tc_after_recovery": self._cs_Tin
+            }
+
+        # Use pre-computed arrays from __init__ instead of creating them here
+        T_mix_H = self._initial_T_mix_H.copy()
+        T_mix_C = self._initial_T_mix_C.copy()
+        Q_ijk = np.zeros((NH, NC, ST))
+        
+        # 2. SWS Iteration Loop
+        # -----------------------
+        for sws_iter in range(self.sws_max_iter):
+            T_mix_H_prev = T_mix_H.copy()
+            T_mix_C_prev = T_mix_C.copy()
+
+            # 2a. Hot Pass
+            # ------------
+            for k in range(ST):
+                TinH_stage_k = T_mix_H_prev[:, k - 1] if k > 0 else self._hs_Tin
+                Tcin_stage_k = T_mix_C_prev[:, k + 1] if k < ST - 1 else self._cs_Tin
+                
+                TinH_matrix = TinH_stage_k[:, np.newaxis]
+                Tcin_matrix = Tcin_stage_k[np.newaxis, :]
+
+                CPH_b_matrix = self._hs_CP[:, np.newaxis] * FH_ijk[:, :, k]
+                CPC_b_matrix = self._cs_CP[np.newaxis, :] * FC_ijk[:, :, k]
+
+                Q_H_target_limit = CPH_b_matrix * (TinH_matrix - self._hs_Tout_target[:, np.newaxis])
+                Q_H_EMAT_limit   = CPH_b_matrix * (TinH_matrix - (Tcin_matrix + EMAT))
+                Q_C_target_limit = CPC_b_matrix * (self._cs_Tout_target[np.newaxis, :] - Tcin_matrix)
+                Q_C_EMAT_limit   = CPC_b_matrix * ((TinH_matrix - EMAT) - Tcin_matrix)
+
+                Q_m = np.minimum.reduce([Q_H_target_limit, Q_H_EMAT_limit,
+                                         Q_C_target_limit, Q_C_EMAT_limit])
+                
+                Q_ijk[:, :, k] = np.maximum(0, Q_m) * Z_ijk[:, :, k]
+                
+                Q_total_from_hot_at_k = np.sum(Q_ijk[:, :, k], axis=1)
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    delta_T = Q_total_from_hot_at_k / self._hs_CP
+                    T_mix_H[:, k] = TinH_stage_k - np.nan_to_num(delta_T)
+
+            # 2b. Cold Pass
+            # -------------
+            for k in range(ST - 1, -1, -1):
+                TinC_stage_k = T_mix_C_prev[:, k + 1] if k < ST - 1 else self._cs_Tin
+                Q_total_to_cold_at_k = np.sum(Q_ijk[:, :, k], axis=0)
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    delta_T = Q_total_to_cold_at_k / self._cs_CP
+                    T_mix_C[:, k] = TinC_stage_k + np.nan_to_num(delta_T)
+
+            # 2c. Convergence Check
+            # -----------------------
+            delta_H = np.max(np.abs(T_mix_H - T_mix_H_prev)) if NH > 0 else 0
+            delta_C = np.max(np.abs(T_mix_C - T_mix_C_prev)) if NC > 0 else 0
+
+            if delta_H < self.sws_conv_tol and delta_C < self.sws_conv_tol and sws_iter > 0:
+                return {
+                    "converged": True, "Q_ijk": Q_ijk, "T_mix_H": T_mix_H, "T_mix_C": T_mix_C,
+                    "final_Th_after_recovery": T_mix_H[:, -1] if ST > 0 else self._hs_Tin,
+                    "final_Tc_after_recovery": T_mix_C[:, 0] if ST > 0 else self._cs_Tin
+                }
+
+        return {"converged": False}
+
+    def _perform_sws_loop(self, Z_ijk, FH_ijk, FC_ijk):
+        """
+        Performs the Sequential Workspace Synthesis (SWS) calculation.
+        Returns a dictionary with converged results or a failure flag.
+        """
+        NH, NC, ST = self.problem.NH, self.problem.NC, self.problem.num_stages
+        EMAT = self.problem.cost_params.EMAT
+
+        T_mix_H = np.array([[hs.Tin for _ in range(ST)] for hs in self.problem.hot_streams])
+        T_mix_C = np.array([[cs.Tin for _ in range(ST)] for cs in self.problem.cold_streams])
+        
+        Q_ijk = np.zeros((NH, NC, ST))
+        
+        for sws_iter in range(self.sws_max_iter):
+            T_mix_H_prev = T_mix_H.copy()
+            T_mix_C_prev = T_mix_C.copy()
+
+            # Hot pass (from inlet to outlet)
+            for k in range(ST):
+                TinH_stage_k = T_mix_H_prev[:, k - 1] if k > 0 else np.array([s.Tin for s in self.problem.hot_streams])
+                Q_total_from_hot_at_k = np.zeros(NH)
+                for i in range(NH):
+                    hs = self.problem.hot_streams[i]
+                    for j in range(NC):
+                        if Z_ijk[i, j, k] == 1:
+                            cs = self.problem.cold_streams[j]
+                            Tcin_branch = T_mix_C_prev[j, k + 1] if k < ST - 1 else cs.Tin
+                            CPH_b = hs.CP * FH_ijk[i, j, k]
+                            CPC_b = cs.CP * FC_ijk[i, j, k]
+                            
+                            Q_m = 0
+                            if CPH_b > 1e-9 and CPC_b > 1e-9:
+                                Q_H_target_limit = CPH_b * (TinH_stage_k[i] - hs.Tout_target)
+                                Q_H_EMAT_limit   = CPH_b * (TinH_stage_k[i] - (Tcin_branch + EMAT))
+                                Q_C_target_limit = CPC_b * (cs.Tout_target - Tcin_branch)
+                                Q_C_EMAT_limit   = CPC_b * ((TinH_stage_k[i] - EMAT) - Tcin_branch)
+                                Q_m = max(0, min(Q_H_target_limit, Q_H_EMAT_limit, Q_C_target_limit, Q_C_EMAT_limit))
+                            
+                            Q_ijk[i, j, k] = Q_m
+                            Q_total_from_hot_at_k[i] += Q_m
+                
+                for i in range(NH):
+                    if self.problem.hot_streams[i].CP > 1e-9:
+                        T_mix_H[i, k] = TinH_stage_k[i] - Q_total_from_hot_at_k[i] / self.problem.hot_streams[i].CP
+                    else:
+                        T_mix_H[i, k] = TinH_stage_k[i]
+
+            # Cold pass (from outlet to inlet)
+            for k in range(ST - 1, -1, -1):
+                TinC_stage_k = T_mix_C_prev[:, k + 1] if k < ST - 1 else np.array([s.Tin for s in self.problem.cold_streams])
+                Q_total_to_cold_at_k = np.sum(Q_ijk[:, :, k], axis=0) # Sum Q over hot streams for each cold stream
+                
+                for j in range(NC):
+                    if self.problem.cold_streams[j].CP > 1e-9:
+                        T_mix_C[j, k] = TinC_stage_k[j] + Q_total_to_cold_at_k[j] / self.problem.cold_streams[j].CP
+                    else:
+                        T_mix_C[j, k] = TinC_stage_k[j]
+
+            # Convergence check
+            delta_H = np.max(np.abs(T_mix_H - T_mix_H_prev)) if NH > 0 and ST > 0 else 0
+            delta_C = np.max(np.abs(T_mix_C - T_mix_C_prev)) if NC > 0 and ST > 0 else 0
+
+            if delta_H < self.sws_conv_tol and delta_C < self.sws_conv_tol and sws_iter > 0:
+                return {
+                    "converged": True, "Q_ijk": Q_ijk, "T_mix_H": T_mix_H, "T_mix_C": T_mix_C,
+                    "final_Th_after_recovery": T_mix_H[:, -1] if ST > 0 else np.array([s.Tin for s in self.problem.hot_streams]),
+                    "final_Tc_after_recovery": T_mix_C[:, 0] if ST > 0 else np.array([s.Tin for s in self.problem.cold_streams])
+                }
+
+        return {"converged": False} # Failed to converge
+
+    def _calculate_process_exchanger_costs(self, Z_ijk, sws_results, FH_ijk, FC_ijk, adaptive_penalty):
+        """Calculates capital cost and EMAT penalty for process exchangers."""
+        capital_cost = 0.0
+        penalty_EMAT = 0.0
+        details = []
+        NH, NC, ST = self.problem.NH, self.problem.NC, self.problem.num_stages
+        EMAT = self.problem.cost_params.EMAT
+        
+        Q_ijk, T_mix_H, T_mix_C = sws_results['Q_ijk'], sws_results['T_mix_H'], sws_results['T_mix_C']
+
+        for k in range(ST):
+            for i in range(NH):
+                for j in range(NC):
+                    if Z_ijk[i, j, k] == 1 and Q_ijk[i, j, k] > 1e-6:
+                        hs, cs = self.problem.hot_streams[i], self.problem.cold_streams[j]
+                        Q = Q_ijk[i, j, k]
+                        
+                        Th_in = T_mix_H[i, k-1] if k > 0 else hs.Tin
+                        Tc_in = T_mix_C[j, k+1] if k < ST-1 else cs.Tin
+                        CPH_b = hs.CP * FH_ijk[i,j,k]
+                        CPC_b = cs.CP * FC_ijk[i,j,k]
+                        
+                        if CPH_b < 1e-9 or CPC_b < 1e-9: continue
+                        
+                        Th_out = Th_in - Q / CPH_b
+                        Tc_out = Tc_in + Q / CPC_b
+
+                        # EMAT penalty check
+                        if (Th_in - Tc_out) < EMAT - 1e-3: penalty_EMAT += adaptive_penalty * (EMAT - (Th_in - Tc_out))
+                        if (Th_out - Tc_in) < EMAT - 1e-3: penalty_EMAT += adaptive_penalty * (EMAT - (Th_out - Tc_in))
+
+                        lmtd = calculate_lmtd(Th_in, Th_out, Tc_in, Tc_out)
+                        U = self.problem.U_matrix_process[i, j]
+                        
+                        area = Q / (U * lmtd) if U * lmtd > 1e-9 else 1e9
+                        if area < 0: area = 1e9
+                        
+                        cost = self.problem.fixed_cost_process_exchangers[i,j] + \
+                               self.problem.area_cost_process_coeff[i,j] * (area ** self.problem.area_cost_process_exp[i,j])
+                        
+                        capital_cost += cost
+                        details.append({'H': i, 'C': j, 'k': k, 'Q': Q, 'Area': area, 
+                                        'Th_in': Th_in, 'Th_out': Th_out, 'Tc_in': Tc_in, 'Tc_out': Tc_out})
+
+        costs = {"capital_process_exchangers": capital_cost, "penalty_EMAT_etc": penalty_EMAT}
+        return costs, details
+
+    def _assign_utilities_and_cost(self, final_Th_before, final_Tc_before, adaptive_penalty):
+        """Assigns and costs the best available utility for each stream needing one."""
+        NH, NC = self.problem.NH, self.problem.NC
+        EMAT = self.problem.cost_params.EMAT
+        final_Th, final_Tc = final_Th_before.copy(), final_Tc_before.copy()
+        
+        costs = {
+            "capital_heaters": 0.0, "capital_coolers": 0.0,
+            "op_cost_hot_utility": 0.0, "op_cost_cold_utility": 0.0,
+            "Q_hot_consumed": 0.0, "Q_cold_consumed": 0.0,
+            OBJ_KEY_CO2: 0.0, "penalty_unmet_targets": 0.0
+        }
+        details_list = []
+
+        # Coolers for Hot Streams
+        for i in range(NH):
+            hs = self.problem.hot_streams[i]
+            Q_needed = hs.CP * (final_Th[i] - hs.Tout_target)
+            if Q_needed > 1e-6 and hs.CP > 1e-9:
+                best_cu_choice = {'cost': float('inf')}
+                for cu in self.problem.cold_utility:
+                    is_forbidden = any(f.get('hot') == hs.id and f.get('cold') == cu.id for f in self.problem.forbidden_matches or [])
+                    if is_forbidden: continue
+
+                    Th_in, Th_out = final_Th[i], hs.Tout_target
+                    Tc_in, Tc_out = cu.Tin, cu.Tout if cu.Tout is not None else cu.Tin + 5
+                    
+                    if Th_in < Tc_out + EMAT - 1e-3 or Th_out < Tc_in + EMAT - 1e-3: continue # EMAT violation
+
+                    lmtd = calculate_lmtd(Th_in, Th_out, Tc_in, Tc_out)
+                    area = Q_needed / (cu.U * lmtd) if cu.U * lmtd > 1e-9 else 1e9
+                    if area < 0: area = 1e9
+
+                    cap_cost = cu.fix_cost + cu.area_cost_coeff * (area ** cu.area_cost_exp)
+                    op_cost = cu.cost * Q_needed
+                    if cap_cost + op_cost < best_cu_choice['cost']:
+                        best_cu_choice = {'cost': cap_cost + op_cost, 'cap': cap_cost, 'op': op_cost, 'cu': cu, 'area': area, 'Th_in': Th_in, 'Th_out': Th_out, 'util_Tin': Tc_in, 'util_Tout': Tc_out, 'Q':Q_needed}
+                
+                if best_cu_choice['cost'] != float('inf'):
+                    costs['capital_coolers'] += best_cu_choice['cap']
+                    costs['op_cost_cold_utility'] += best_cu_choice['op']
+                    costs['Q_cold_consumed'] += best_cu_choice['Q']
+                    costs[OBJ_KEY_CO2] += best_cu_choice['Q'] * best_cu_choice['cu'].co2_factor # type: ignore
+                    final_Th[i] = hs.Tout_target
+                    details_list.append({'type': 'cooler', 'H_idx': i, **best_cu_choice})
+                else:
+                    costs['penalty_unmet_targets'] += adaptive_penalty * Q_needed
+
+        # Heaters for Cold Streams
+        for j in range(NC):
+            cs = self.problem.cold_streams[j]
+            Q_needed = cs.CP * (cs.Tout_target - final_Tc[j])
+            if Q_needed > 1e-6 and cs.CP > 1e-9:
+                best_hu_choice = {'cost': float('inf')}
+                for hu in self.problem.hot_utility:
+                    is_forbidden = any(f.get('hot') == hu.id and f.get('cold') == cs.id for f in self.problem.forbidden_matches or [])
+                    if is_forbidden: continue
+
+                    Tc_in, Tc_out = final_Tc[j], cs.Tout_target
+                    Th_in, Th_out = hu.Tin, hu.Tout if hu.Tout is not None else hu.Tin - 5
+
+                    if Th_in < Tc_out + EMAT - 1e-3 or Th_out < Tc_in + EMAT - 1e-3: continue
+
+                    lmtd = calculate_lmtd(Th_in, Th_out, Tc_in, Tc_out)
+                    area = Q_needed / (hu.U * lmtd) if hu.U * lmtd > 1e-9 else 1e9
+                    if area < 0: area = 1e9
+
+                    cap_cost = hu.fix_cost + hu.area_cost_coeff * (area ** hu.area_cost_exp)
+                    op_cost = hu.cost * Q_needed
+                    if cap_cost + op_cost < best_hu_choice['cost']:
+                        best_hu_choice = {'cost': cap_cost + op_cost, 'cap': cap_cost, 'op': op_cost, 'hu': hu, 'area': area, 'Tc_in': Tc_in, 'Tc_out': Tc_out, 'util_Tin': Th_in, 'util_Tout': Th_out, 'Q':Q_needed}
+
+                if best_hu_choice['cost'] != float('inf'):
+                    costs['capital_heaters'] += best_hu_choice['cap']
+                    costs['op_cost_hot_utility'] += best_hu_choice['op']
+                    costs['Q_hot_consumed'] += best_hu_choice['Q']
+                    costs[OBJ_KEY_CO2] += best_hu_choice['Q'] * best_hu_choice['hu'].co2_factor # type: ignore
+                    final_Tc[j] = cs.Tout_target
+                    details_list.append({'type': 'heater', 'C_idx': j, **best_hu_choice})
+                else:
+                    costs['penalty_unmet_targets'] += adaptive_penalty * Q_needed
+        
+        final_temps = {"Th": final_Th, "Tc": final_Tc}
+        return costs, details_list, final_temps
+
+    def _calculate_final_penalties(self, Z_ijk, Q_ijk, final_temps, Q_hot_consumed, Q_cold_consumed, adaptive_penalty):
+        """Calculates all remaining penalties for the final network structure."""
+        penalties = {
+            "penalty_pinch_deviation": 0.0,
+            "penalty_forbidden_matches": 0.0,
+            "penalty_required_matches": 0.0
+        }
+        temp_tolerance = 0.001
+        
+        # Add to unmet target penalty if final temps are still off
+        for i, hs in enumerate(self.problem.hot_streams):
+            if abs(final_temps["Th"][i] - hs.Tout_target) > temp_tolerance:
+                penalties["penalty_unmet_targets"] = penalties.get("penalty_unmet_targets", 0) + adaptive_penalty * abs(final_temps["Th"][i] - hs.Tout_target)
+        for j, cs in enumerate(self.problem.cold_streams):
+            if abs(final_temps["Tc"][j] - cs.Tout_target) > temp_tolerance:
+                penalties["penalty_unmet_targets"] = penalties.get("penalty_unmet_targets", 0) + adaptive_penalty * abs(final_temps["Tc"][j] - cs.Tout_target)
+
+        # Pinch deviation
+        if hasattr(self.problem, 'Q_H_min_pinch') and self.problem.Q_H_min_pinch is not None:
+            if Q_hot_consumed > self.problem.Q_H_min_pinch + 1e-3:
+                penalties['penalty_pinch_deviation'] += self.pinch_deviation_penalty_factor * (Q_hot_consumed - self.problem.Q_H_min_pinch)
+        if hasattr(self.problem, 'Q_C_min_pinch') and self.problem.Q_C_min_pinch is not None:
+            if Q_cold_consumed > self.problem.Q_C_min_pinch + 1e-3:
+                penalties['penalty_pinch_deviation'] += self.pinch_deviation_penalty_factor * (Q_cold_consumed - self.problem.Q_C_min_pinch)
+
+        # Forbidden and Required Matches
+        hot_ids = [s.id for s in self.problem.hot_streams]
+        cold_ids = [s.id for s in self.problem.cold_streams]
+        active_matches = {(hot_ids[i], cold_ids[j]) for i, j, k in np.argwhere(Z_ijk == 1).tolist()}
+
+        if self.problem.forbidden_matches:
+            for f in self.problem.forbidden_matches:
+                if (f['hot'], f['cold']) in active_matches:
+                    penalties['penalty_forbidden_matches'] += adaptive_penalty
+        
+        if self.problem.required_matches:
+            for r in self.problem.required_matches:
+                hot_idx = hot_ids.index(r['hot'])
+                cold_idx = cold_ids.index(r['cold'])
+                if (r['hot'], r['cold']) not in active_matches or np.sum(Q_ijk[hot_idx, cold_idx, :]) < r.get('min_Q_total', 1e-6):
+                    penalties['penalty_required_matches'] += adaptive_penalty
+        
+        return penalties
+
+    def _aggregate_costs(self, costs, penalties, final_temps):
+        """Sums all cost and penalty components into the final dictionary."""
+        total_capital = costs['capital_process_exchangers'] + costs['capital_heaters'] + costs['capital_coolers']
+        total_operating = costs['op_cost_hot_utility'] + costs['op_cost_cold_utility']
+        
+        # Sum of only penalties that should be in the optimized objective
+        penalties_sum_for_obj = sum(v for k, v in penalties.items() if k != 'penalty_unmet_targets' and v > 0)
+        
+        # True TAC includes unavoidable penalties (unmet targets if no utility could satisfy it)
+        true_tac_report = total_capital + total_operating + penalties['penalty_unmet_targets']
+
+        # The objective for the optimizer includes all penalties to guide the search
+        tac_for_ga = total_capital + (total_operating * self.utility_cost_factor) + penalties_sum_for_obj + penalties['penalty_unmet_targets']
+
+        return {
+            OBJ_KEY_OPTIMIZING: tac_for_ga,
+            OBJ_KEY_REPORT: true_tac_report,
+            OBJ_KEY_CO2: costs[OBJ_KEY_CO2],
+            "capital_process_exchangers": costs['capital_process_exchangers'],
+            "capital_heaters": costs['capital_heaters'],
+            "capital_coolers": costs['capital_coolers'],
+            "op_cost_hot_utility": costs['op_cost_hot_utility'],
+            "op_cost_cold_utility": costs['op_cost_cold_utility'],
+            "total_capital_cost": total_capital,
+            "total_operating_cost": total_operating,
+            "Q_hot_consumed_kW_actual": costs['Q_hot_consumed'],
+            "Q_cold_consumed_kW_actual": costs['Q_cold_consumed'],
+            "penalty_total_in_GA_TAC": penalties_sum_for_obj + penalties['penalty_unmet_targets'],
+            "final_outlet_Th_after_utility": final_temps["Th"].tolist(),
+            "final_outlet_Tc_after_utility": final_temps["Tc"].tolist(),
+            **penalties
+        }
 
     # --- Methods to be implemented by subclasses ---
     def evolve_one_generation(self, gen_num=0, run_id_for_print=""):
@@ -521,11 +604,8 @@ class BaseOptimizer:
             self.details_list.append(exchanger_details_list)
         return self.fitnesses, self.details_list
 
-
     def run(self, run_id_for_print=""):
         """Runs the optimizer for the total number of generations."""
-        # This can be called if running sequentially, or by the worker at the very end.
-        # Ensure fitnesses are evaluated if not already (e.g. for TLBO)
         if hasattr(self, '_evaluate_population') and not self.fitnesses and self.population:
              self.fitnesses, self.details_list = self._evaluate_population(self.population)
 

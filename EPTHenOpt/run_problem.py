@@ -11,6 +11,7 @@ import argparse
 import sys
 import json
 from pathlib import Path
+import time
 
 # Use relative imports to prevent installation conflicts
 from .hen_models import Stream, Utility, CostParameters, HENProblem
@@ -22,16 +23,29 @@ from .aco_helpers import AntColonyOptimizationHEN
 from .nsga2_helpers import NSGAIIHEN
 from .utils import (
     load_data_from_csv, display_optimization_results,
-    display_problem_summary, display_help
+    display_problem_summary, display_help,
+    OBJ_KEY_OPTIMIZING, OBJ_KEY_REPORT, OBJ_KEY_CO2
 )
 from .cores import run_parallel_with_migration
+
+SOLVER_MAP = {
+    'GA': GeneticAlgorithmHEN,
+    'TLBO': TeachingLearningBasedOptimizationHEN,
+    'PSO': ParticleSwarmOptimizationHEN,
+    'SA': SimulatedAnnealingHEN,
+    'ACO': AntColonyOptimizationHEN
+}
 
 # --- Main Execution Function ---
 def main(args):
     """
     Main function to run HEN synthesis, configured by command-line arguments.
     """
-    print(f"HEN Synthesis using {args.model} with EPTHenOpt")
+    if args.objective == 'multi':
+        model_display_name = 'NSGA-II'
+    else:
+        model_display_name = args.model.upper()
+    print(f"HEN Synthesis using {model_display_name} with EPTHenOpt")
 
     loaded_hs_data, loaded_cs_data, loaded_hu_data, loaded_cu_data, \
     loaded_matches_U, loaded_forbidden, loaded_required = load_data_from_csv(
@@ -89,7 +103,12 @@ def main(args):
     cost_params = CostParameters(EMAT=args.EMAT_setting, U_overall=args.default_U_overall, exch_fixed=args.exchanger_fixed_cost, exch_area_coeff=args.exchanger_area_coeff, exch_area_exp=args.exchanger_area_exp, heater_fixed=args.heater_fixed_cost, heater_area_coeff=args.heater_area_coeff, heater_area_exp=args.heater_area_exp, cooler_fixed=args.cooler_fixed_cost, cooler_area_coeff=args.cooler_area_coeff, cooler_area_exp=args.cooler_area_exp)
     num_stages = args.num_stages if args.num_stages > 0 else max(1, len(hot_streams), len(cold_streams))
 
-    hen_problem = HENProblem(hot_streams=hot_streams, cold_streams=cold_streams, hot_utility=hot_utilities, cold_utility=cold_utilities, cost_params=cost_params, num_stages=num_stages, matches_U_cost=loaded_matches_U, forbidden_matches=loaded_forbidden, required_matches=loaded_required)
+    hen_problem = HENProblem(
+        hot_streams=hot_streams, cold_streams=cold_streams,
+        hot_utility=hot_utilities, cold_utility=cold_utilities,
+        cost_params=cost_params, num_stages=num_stages,
+        matches_U_cost=loaded_matches_U, forbidden_matches=loaded_forbidden,
+        required_matches=loaded_required, no_split=args.no_split)
 
     print("\n" + "="*50)
     print("Optimization Run Configuration".center(50))
@@ -118,6 +137,8 @@ def main(args):
     common_opt_params = {"utility_cost_factor": args.utility_cost_factor, "pinch_deviation_penalty_factor": args.pinch_dev_penalty_factor, "sws_max_iter": args.sws_max_iter, "sws_conv_tol": args.sws_conv_tol}
     total_gens = args.epochs * args.generations_per_epoch
     processed_results = []
+    
+    start_time = time.time()
 
     if args.objective == 'multi':
         print("\nRunning in Multi-Objective mode (NSGA-II)...")
@@ -152,23 +173,11 @@ def main(args):
 
         if args.number_of_workers <= 1:
             print("\nRunning in sequential mode (1 worker)...")
-            solver_class_name = "GeneticAlgorithmHEN"
-            if args.model.upper() == 'GA':
-                solver_class_name = "GeneticAlgorithmHEN"
-            elif args.model.upper() == 'TLBO':
-                solver_class_name = "TeachingLearningBasedOptimizationHEN"
-            elif args.model.upper() == 'PSO':
-                solver_class_name = "ParticleSwarmOptimizationHEN"
-            elif args.model.upper() == 'SA':
-                solver_class_name = "SimulatedAnnealingHEN"
-            elif args.model.upper() == 'ACO':
-                solver_class_name = "AntColonyOptimizationHEN"
-
-            solver_class = globals()[solver_class_name]
+            solver_class = SOLVER_MAP.get(args.model.upper())
+            if not solver_class:
+                raise ValueError(f"Unknown model: {args.model}")
+            
             solver = solver_class(problem=hen_problem, population_size=args.population_size, **solver_params)
-
-            solver_params = { **common_opt_params, **model_opt_specific_params, "initial_penalty": args.initial_penalty, "final_penalty": args.final_penalty, "generations": total_gens }
-            solver = GeneticAlgorithmHEN(problem=hen_problem, population_size=args.population_size, **solver_params) if args.model.upper() == 'GA' else TeachingLearningBasedOptimizationHEN(problem=hen_problem, population_size=args.population_size, **solver_params)
 
             for epoch in range(args.epochs):
                 print(f"\n--- Starting Epoch {epoch + 1}/{args.epochs} ---")
@@ -178,8 +187,8 @@ def main(args):
                     run_id="sequential"
                 )
                 best_costs = solver.best_costs_overall_dict
-                if best_costs and best_costs.get('TAC_GA_optimizing') != float('inf'):
-                    current_best_obj = best_costs.get('TAC_GA_optimizing', float('inf'))
+                if best_costs and best_costs.get(OBJ_KEY_OPTIMIZING) != float('inf'):
+                    current_best_obj = best_costs.get(OBJ_KEY_OPTIMIZING, float('inf'))
                     print(f"--- Epoch {epoch+1}/{args.epochs} complete. Current Best Obj.: {current_best_obj:.2f} ---")
 
             run_results = [(0, solver.best_chromosome_overall, solver.best_costs_overall_dict, solver.best_details_overall)]
@@ -196,7 +205,11 @@ def main(args):
                     if best_costs: processed_results.append({'seed': f"worker_{worker_id}", 'costs': best_costs, 'chromosome': best_chromo, 'details': best_details})
                     else: print(f"Worker {worker_id} returned invalid costs.")
                 else: print(f"Received malformed result from a worker: {res_item}")
-        
+    
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+
+    print(f"\nOptimization completed in {elapsed_time:.2f} seconds.")
     display_optimization_results(processed_results, hen_problem, args.model, args.output_dir)
 
 
@@ -247,6 +260,7 @@ def cli():
     core_group.add_argument('--generations_per_epoch', type=int)
     core_group.add_argument('--number_of_workers', type=int)
     core_group.add_argument('--num_stages', type=int)
+    core_group.add_argument('--no_split', action='store_true', default=False, help="Enforce no stream splitting in the network design.")
     core_group.add_argument('--verbose', action='store_true')
     core_group.add_argument('--output_dir', type=str, default=None, help="Directory to save structured output files (e.g., CSV, JSON).")
 

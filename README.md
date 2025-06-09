@@ -3,7 +3,7 @@
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Python Version](https://img.shields.io/badge/python-3.8+-brightgreen.svg)
 ![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)
-![Version](https://img.shields.io/badge/version-0.7.0-informational)
+![Version](https://img.shields.io/badge/version-0.8.0-informational)
 
 ---
 
@@ -33,6 +33,7 @@ For a detailed explanation of the underlying methodology and its academic contex
 ## Installation
 
 1.  **Clone the repository:**
+
     ```bash
     git clone https://github.com/may3rd/EPTHenOpt.git
     cd EPTHenOpt
@@ -40,6 +41,7 @@ For a detailed explanation of the underlying methodology and its academic contex
 
 2.  **Install the package:**
     You can install the package and its dependencies (`numpy`, `pytest`) using `pip`. For development, it's recommended to install in "editable" mode with development tools like Sphinx.
+
     ```bash
     # For development (recommended)
     pip install -e .[dev]
@@ -57,6 +59,7 @@ EPTHenOpt can be configured and run in three flexible ways: using a JSON config 
 The easiest way to manage settings is through the `config.json` file. It now supports sections for all optimizers and environmental parameters.
 
 **Example `config.json`:**
+
 ```json
 {
   "file_paths": {
@@ -83,12 +86,14 @@ The easiest way to manage settings is through the `config.json` file. It now sup
 The `run_hen_problem` script can be used to execute optimizations from anywhere in your terminal.
 
 **Single-Objective Example (PSO):**
+
 ```bash
 run_hen_problem --model PSO --pso_inertia_weight 0.6 --number_of_workers 8
 ```
 
 **Multi-Objective Example (NSGA-II):**
 This command runs a multi-objective optimization to find the trade-off between cost and CO₂ emissions. The results (Pareto front) will be saved to the specified output directory.
+
 ```bash
 run_hen_problem --objective multi --output_dir ./results_tac_vs_co2
 ```
@@ -98,6 +103,7 @@ run_hen_problem --objective multi --output_dir ./results_tac_vs_co2
 Import and use `EPTHenOpt` directly in your Python scripts for maximum flexibility.
 
 **Example Script (`my_analysis.py`):**
+
 ```python
 import EPTHenOpt
 
@@ -132,7 +138,7 @@ if __name__ == '__main__':
 | `LITERATURE.md`               | An explanation of the underlying Stage-Wise Superstructure (SWS) model.            |
 | `run_problem.py`              | Contains the logic for the `run_hen_problem` command-line tool.                    |
 | `EPTHenOpt/`                  | The core Python package source code.                                               |
-| `EPTHenOpt/__init__.py`       | Defines the package's public API, including the `EPTHenOpt.run()` function.          |
+| `EPTHenOpt/__init__.py`       | Defines the package's public API, including the `EPTHenOpt.run()` function.        |
 | `EPTHenOpt/hen_models.py`     | Contains the data models: `Stream`, `Utility`, `CostParameters`, and `HENProblem`. |
 | `EPTHenOpt/base_optimizer.py` | Base class for all optimizers, containing the shared fitness calculation logic.    |
 | `EPTHenOpt/ga_helpers.py`     | Implementation of the `GeneticAlgorithmHEN` optimizer.                             |

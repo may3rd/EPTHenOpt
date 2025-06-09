@@ -8,6 +8,7 @@ import copy
 import numpy as np
 
 from .base_optimizer import BaseOptimizer
+from .utils import OBJ_KEY_OPTIMIZING, OBJ_KEY_REPORT, OBJ_KEY_CO2
 
 class NSGAIIHEN(BaseOptimizer):
     """

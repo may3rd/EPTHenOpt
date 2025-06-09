@@ -23,7 +23,7 @@ dev_requirements = [
 
 setup(
     name="EPTHenOpt",
-    version="0.7.0",  # Version bump
+    version="0.8.0",  # Version bump
     author="Maetee Lorprajuksiri",
     author_email="26008353@pttgcgroup.com",
     description="A package for Heat Exchanger Network (HEN) Synthesis and Optimization.",

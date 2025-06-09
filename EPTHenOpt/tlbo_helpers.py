@@ -11,6 +11,7 @@ import numpy as np
 import random
 
 from .base_optimizer import BaseOptimizer
+from .utils import OBJ_KEY_OPTIMIZING, OBJ_KEY_REPORT, OBJ_KEY_CO2
 
 class TeachingLearningBasedOptimizationHEN(BaseOptimizer):
     def __init__(self,
@@ -53,13 +54,13 @@ class TeachingLearningBasedOptimizationHEN(BaseOptimizer):
                 self.fitnesses.append(fitness)
                 self.details_list.append(details)
             except Exception as e:
-                error_costs = {"TAC_GA_optimizing": float('inf'), "TAC_true_report": float('inf')}
+                error_costs = {OBJ_KEY_OPTIMIZING: float('inf'), OBJ_KEY_REPORT: float('inf')}
                 self.fitnesses.append(error_costs)
                 self.details_list.append([])
         
         if self.fitnesses:
-            best_idx_initial = np.argmin([f['TAC_GA_optimizing'] for f in self.fitnesses])
-            if self.fitnesses[best_idx_initial]['TAC_GA_optimizing'] < self.best_costs_overall_dict['TAC_GA_optimizing']:
+            best_idx_initial = np.argmin([f[OBJ_KEY_OPTIMIZING] for f in self.fitnesses])
+            if self.fitnesses[best_idx_initial][OBJ_KEY_OPTIMIZING] < self.best_costs_overall_dict[OBJ_KEY_OPTIMIZING]:
                 self.best_costs_overall_dict = copy.deepcopy(self.fitnesses[best_idx_initial])
                 self.best_chromosome_overall = self.population[best_idx_initial].copy()
                 self.best_details_overall = copy.deepcopy(self.details_list[best_idx_initial])
@@ -74,7 +75,7 @@ class TeachingLearningBasedOptimizationHEN(BaseOptimizer):
             if not self.fitnesses : return
 
         # --- Teacher Phase ---
-        current_best_idx = np.argmin([f['TAC_GA_optimizing'] for f in self.fitnesses])
+        current_best_idx = np.argmin([f[OBJ_KEY_OPTIMIZING] for f in self.fitnesses])
         teacher_chromosome = self.population[current_best_idx].copy()
         
         mean_solution_vector = np.mean(np.array(self.population), axis=0)
@@ -102,10 +103,10 @@ class TeachingLearningBasedOptimizationHEN(BaseOptimizer):
             try:
                 mod_fitness, mod_details = self._calculate_fitness(modified_learner)
             except Exception as e:
-                mod_fitness = {"TAC_GA_optimizing": float('inf'), "TAC_true_report": float('inf')}
+                mod_fitness = {OBJ_KEY_OPTIMIZING: float('inf'), OBJ_KEY_REPORT: float('inf')}
                 mod_details = []
 
-            if mod_fitness['TAC_GA_optimizing'] < self.fitnesses[i]['TAC_GA_optimizing']:
+            if mod_fitness[OBJ_KEY_OPTIMIZING] < self.fitnesses[i][OBJ_KEY_OPTIMIZING]:
                 new_population_after_teacher_phase.append(modified_learner)
                 new_fitnesses_after_teacher_phase.append(mod_fitness)
                 new_details_after_teacher_phase.append(mod_details)
@@ -134,7 +135,7 @@ class TeachingLearningBasedOptimizationHEN(BaseOptimizer):
             other_fitness = self.fitnesses[j]
             
             r = random.random()
-            if current_fitness['TAC_GA_optimizing'] < other_fitness['TAC_GA_optimizing']:
+            if current_fitness[OBJ_KEY_OPTIMIZING] < other_fitness[OBJ_KEY_OPTIMIZING]:
                  modified_learner_lp = current_learner + r * (current_learner - other_learner)
             else:
                  modified_learner_lp = current_learner + r * (other_learner - current_learner)
@@ -145,10 +146,10 @@ class TeachingLearningBasedOptimizationHEN(BaseOptimizer):
             try:
                 mod_lp_fitness, mod_lp_details = self._calculate_fitness(modified_learner_lp)
             except Exception as e:
-                mod_lp_fitness = {"TAC_GA_optimizing": float('inf'), "TAC_true_report": float('inf')}
+                mod_lp_fitness = {OBJ_KEY_OPTIMIZING: float('inf'), OBJ_KEY_REPORT: float('inf')}
                 mod_lp_details = []
 
-            if mod_lp_fitness['TAC_GA_optimizing'] < current_fitness['TAC_GA_optimizing']:
+            if mod_lp_fitness[OBJ_KEY_OPTIMIZING] < current_fitness[OBJ_KEY_OPTIMIZING]:
                 new_population_after_learner_phase.append(modified_learner_lp)
                 new_fitnesses_after_learner_phase.append(mod_lp_fitness)
                 new_details_after_learner_phase.append(mod_lp_details)
@@ -162,8 +163,8 @@ class TeachingLearningBasedOptimizationHEN(BaseOptimizer):
         self.details_list = new_details_after_learner_phase
         
         if self.fitnesses:
-            best_idx_this_gen = np.argmin([f['TAC_GA_optimizing'] for f in self.fitnesses])
-            if self.fitnesses[best_idx_this_gen]['TAC_GA_optimizing'] < self.best_costs_overall_dict['TAC_GA_optimizing']:
+            best_idx_this_gen = np.argmin([f[OBJ_KEY_OPTIMIZING] for f in self.fitnesses])
+            if self.fitnesses[best_idx_this_gen][OBJ_KEY_OPTIMIZING] < self.best_costs_overall_dict[OBJ_KEY_OPTIMIZING]:
                 self.best_costs_overall_dict = copy.deepcopy(self.fitnesses[best_idx_this_gen])
                 self.best_chromosome_overall = self.population[best_idx_this_gen].copy()
                 self.best_details_overall = copy.deepcopy(self.details_list[best_idx_this_gen])
@@ -171,7 +172,7 @@ class TeachingLearningBasedOptimizationHEN(BaseOptimizer):
         if self.verbose:
             print_prefix = f"Run {run_id_for_print} - PSO - " if run_id_for_print else "PSO - "
             overall_best_true_str = f"{self.best_costs_overall_dict['TAC_true_report']:.2f}" if self.best_costs_overall_dict.get('TAC_true_report') != float('inf') else "Inf"
-            best_obj_str = f"{self.best_costs_overall_dict['TAC_GA_optimizing']:.2f}" if self.best_costs_overall_dict.get('TAC_GA_optimizing') != float('inf') else "Inf"
+            best_obj_str = f"{self.best_costs_overall_dict[OBJ_KEY_OPTIMIZING]:.2f}" if self.best_costs_overall_dict.get(OBJ_KEY_OPTIMIZING) != float('inf') else "Inf"
             print(f"{print_prefix}Gen {gen_num+1:03d} | Best True TAC (Overall): {overall_best_true_str} | TLBO Obj: {best_obj_str}")
 
     def inject_chromosome(self, chromosome):
@@ -180,10 +181,10 @@ class TeachingLearningBasedOptimizationHEN(BaseOptimizer):
             try:
                 new_fitness, new_details = self._calculate_fitness(chromosome)
             except Exception as e:
-                new_fitness = {"TAC_GA_optimizing": float('inf'), "TAC_true_report": float('inf')}
+                new_fitness = {OBJ_KEY_OPTIMIZING: float('inf'), OBJ_KEY_REPORT: float('inf')}
                 new_details = []
 
-            worst_idx = np.argmax([f['TAC_GA_optimizing'] for f in self.fitnesses])
+            worst_idx = np.argmax([f[OBJ_KEY_OPTIMIZING] for f in self.fitnesses])
             self.population[worst_idx] = chromosome.copy()
             self.fitnesses[worst_idx] = new_fitness
             self.details_list[worst_idx] = new_details

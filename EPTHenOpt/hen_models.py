@@ -1,13 +1,12 @@
 # EPTHenOpt/hen_models.py
-"""
-Data models for Heat Exchanger Network (HEN) problems in the EPTHenOpt package.
+"""Data models for Heat Exchanger Network (HEN) problems.
 
 This module contains the core classes for defining a HEN problem, including:
-- Stream: Represents hot and cold process streams.
-- Utility: Represents hot and cold utilities.
-- CostParameters: Encapsulates all cost-related parameters for the network.
-- HENProblem: The main class that aggregates all problem data and provides
-  methods for pinch analysis and chromosome decoding.
+
+*   ``Stream``: Represents hot and cold process streams.
+*   ``Utility``: Represents hot and cold utilities.
+*   ``CostParameters``: Encapsulates all cost-related parameters for the network.
+*   ``HENProblem``: The main class that aggregates all problem data.
 """
 import numpy as np
 
@@ -58,12 +57,13 @@ class CostParameters:
 class HENProblem:
     def __init__(self, hot_streams=None, cold_streams=None, hot_utility=None, cold_utility=None,
                  cost_params=None, num_stages=1, matches_U_cost=None,
-                 forbidden_matches=None, required_matches=None, annual_op_hours=8000):
+                 forbidden_matches=None, required_matches=None, annual_op_hours=8000,
+                 no_split=False):
         self.hot_streams = hot_streams or []
         self.cold_streams = cold_streams or []
         self.hot_utility = hot_utility or []
         self.cold_utility = cold_utility or []
-        self.cost_params = cost_params
+        self.cost_params: CostParameters = cost_params # type: ignore
         self.num_stages = num_stages
         self.NH = len(self.hot_streams)
         self.NC = len(self.cold_streams)
@@ -74,6 +74,7 @@ class HENProblem:
 
         self.forbidden_matches = forbidden_matches
         self.required_matches = required_matches
+        self.no_split = no_split
 
         self.U_matrix_process = np.zeros((self.NH, self.NC))
         self.fixed_cost_process_exchangers = np.zeros((self.NH, self.NC))

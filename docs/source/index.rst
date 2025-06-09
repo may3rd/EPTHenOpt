@@ -1,19 +1,24 @@
 .. EPTHenOpt documentation master file, created by
-   sphinx-quickstart on Sat Jun  7 22:46:12 2025.
-   You can adapt this file completely to your liking, but it should at least
-   contain the root `toctree` directive.
+   sphinx-quickstart.
 
-EPTHenOpt documentation
-=======================
+Welcome to EPTHenOpt's documentation!
+=====================================
 
-Add your content using ``reStructuredText`` syntax. See the
-`reStructuredText <https://www.sphinx-doc.org/en/master/usage/restructuredtext/index.html>`_
-documentation for details.
+**EPTHenOpt** is a Python package for Heat Exchanger Network (HEN) Synthesis and Optimization.
 
+This package provides a powerful, configuration-driven framework for modeling HEN problems and solving them using a suite of metaheuristic algorithms, including:
+
+* Genetic Algorithm (GA)
+* Teaching-Learning-Based Optimization (TLBO)
+* Particle Swarm Optimization (PSO)
+* Simulated Annealing (SA)
+* Ant Colony Optimization (ACO)
+* NSGA-II for multi-objective optimization (e.g., Cost vs. CO2)
+
+The framework supports parallel processing, detailed result reporting, and flexible problem definitions through CSV and JSON configuration files.
 
 .. toctree::
    :maxdepth: 2
-   :caption: Contents:
+   :caption: Documentation:
 
-   api
-
+   api_reference

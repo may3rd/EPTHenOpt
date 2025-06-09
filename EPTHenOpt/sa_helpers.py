@@ -12,6 +12,7 @@ import numpy as np
 import math
 
 from .base_optimizer import BaseOptimizer
+from .utils import OBJ_KEY_OPTIMIZING, OBJ_KEY_REPORT, OBJ_KEY_CO2
 
 class SimulatedAnnealingHEN(BaseOptimizer):
     """
@@ -40,9 +41,9 @@ class SimulatedAnnealingHEN(BaseOptimizer):
         self.current_fitnesses = []
         for solution in self.current_solutions:
             costs, details = self._calculate_fitness(solution)
-            self.current_fitnesses.append(costs.get('TAC_GA_optimizing', float('inf')))
+            self.current_fitnesses.append(costs.get(OBJ_KEY_OPTIMIZING, float('inf')))
             # Update overall best if this initial solution is good
-            if costs.get('TAC_GA_optimizing', float('inf')) < self.best_costs_overall_dict['TAC_GA_optimizing']:
+            if costs.get(OBJ_KEY_OPTIMIZING, float('inf')) < self.best_costs_overall_dict[OBJ_KEY_OPTIMIZING]:
                 self.best_costs_overall_dict = copy.deepcopy(costs)
                 self.best_chromosome_overall = solution.copy()
                 self.best_details_overall = details
@@ -60,7 +61,7 @@ class SimulatedAnnealingHEN(BaseOptimizer):
             # Generate a neighbor solution
             neighbor_sol = self._get_neighbor(current_sol)
             neighbor_costs, neighbor_details = self._calculate_fitness(neighbor_sol)
-            neighbor_fit = neighbor_costs.get('TAC_GA_optimizing', float('inf'))
+            neighbor_fit = neighbor_costs.get(OBJ_KEY_OPTIMIZING, float('inf'))
             
             # Metropolis acceptance criterion
             if neighbor_fit < current_fit:
@@ -76,7 +77,7 @@ class SimulatedAnnealingHEN(BaseOptimizer):
                     new_fitnesses.append(current_fit)
 
             # Update overall best if a new best is found
-            if new_fitnesses[-1] < self.best_costs_overall_dict['TAC_GA_optimizing']:
+            if new_fitnesses[-1] < self.best_costs_overall_dict[OBJ_KEY_OPTIMIZING]:
                 self.best_costs_overall_dict = copy.deepcopy(neighbor_costs)
                 self.best_chromosome_overall = new_solutions[-1].copy()
                 self.best_details_overall = neighbor_details
@@ -114,4 +115,4 @@ class SimulatedAnnealingHEN(BaseOptimizer):
             idx_to_replace = random.randint(0, self.population_size - 1)
             self.current_solutions[idx_to_replace] = chromosome.copy()
             costs, _ = self._calculate_fitness(chromosome)
-            self.current_fitnesses[idx_to_replace] = costs.get('TAC_GA_optimizing', float('inf'))
+            self.current_fitnesses[idx_to_replace] = costs.get(OBJ_KEY_OPTIMIZING, float('inf'))

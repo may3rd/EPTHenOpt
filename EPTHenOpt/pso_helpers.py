@@ -10,6 +10,7 @@ import copy
 import numpy as np
 
 from .base_optimizer import BaseOptimizer
+from .utils import OBJ_KEY_OPTIMIZING, OBJ_KEY_REPORT, OBJ_KEY_CO2
 
 class Particle:
     """Represents a single particle in the PSO swarm."""
@@ -68,7 +69,7 @@ class ParticleSwarmOptimizationHEN(BaseOptimizer):
             eval_chromosome[:self.len_Z] = (eval_chromosome[:self.len_Z] > 0.5).astype(int)
             
             costs, details = self._calculate_fitness(eval_chromosome)
-            current_fitness = costs.get('TAC_GA_optimizing', float('inf'))
+            current_fitness = costs.get(OBJ_KEY_OPTIMIZING, float('inf'))
             
             if current_fitness < particle.pbest_fitness:
                 particle.pbest_fitness = current_fitness
@@ -115,7 +116,7 @@ class ParticleSwarmOptimizationHEN(BaseOptimizer):
             eval_chromosome = chromosome.copy()
             eval_chromosome[:self.len_Z] = (eval_chromosome[:self.len_Z] > 0.5).astype(int)
             costs, details = self._calculate_fitness(eval_chromosome)
-            new_fitness = costs.get('TAC_GA_optimizing', float('inf'))
+            new_fitness = costs.get(OBJ_KEY_OPTIMIZING, float('inf'))
             self.swarm[worst_particle_idx].pbest_fitness = new_fitness
             self.swarm[worst_particle_idx].pbest_details = details
 

@@ -12,6 +12,7 @@ import copy
 import numpy as np
 
 from .base_optimizer import BaseOptimizer
+from .utils import OBJ_KEY_OPTIMIZING, OBJ_KEY_REPORT, OBJ_KEY_CO2
 
 class AntColonyOptimizationHEN(BaseOptimizer):
     """
@@ -78,7 +79,7 @@ class AntColonyOptimizationHEN(BaseOptimizer):
         # Also deposit pheromone from the best-ever solution
         if self.best_chromosome_overall is not None:
              z_best_overall = self.best_chromosome_overall[:self.len_Z].reshape(self.pheromones.shape)
-             best_fitness = self.best_costs_overall_dict.get('TAC_GA_optimizing', float('inf'))
+             best_fitness = self.best_costs_overall_dict.get(OBJ_KEY_OPTIMIZING, float('inf'))
              if best_fitness != float('inf'):
                  deposit_amount = (self.Q * 2) / best_fitness # Elite ants deposit more
                  self.pheromones += z_best_overall * deposit_amount
@@ -92,12 +93,12 @@ class AntColonyOptimizationHEN(BaseOptimizer):
         for _ in range(self.population_size):
             ant_chromosome = self._construct_solution_for_ant()
             costs, details = self._calculate_fitness(ant_chromosome)
-            fitness = costs.get('TAC_GA_optimizing', float('inf'))
+            fitness = costs.get(OBJ_KEY_OPTIMIZING, float('inf'))
             
             self.ant_solutions.append({'chromosome': ant_chromosome, 'fitness': fitness})
 
             # Check if this is the new best-so-far solution
-            if fitness < self.best_costs_overall_dict['TAC_GA_optimizing']:
+            if fitness < self.best_costs_overall_dict[OBJ_KEY_OPTIMIZING]:
                 self.best_costs_overall_dict = copy.deepcopy(costs)
                 self.best_chromosome_overall = ant_chromosome.copy()
                 self.best_details_overall = details
@@ -108,7 +109,7 @@ class AntColonyOptimizationHEN(BaseOptimizer):
         if self.verbose:
             print_prefix = f"Run {run_id_for_print} - ACO - " if run_id_for_print else "ACO - "
             overall_best_true_str = f"{self.best_costs_overall_dict['TAC_true_report']:.2f}" if self.best_costs_overall_dict.get('TAC_true_report') != float('inf') else "Inf"
-            print(f"{print_prefix}Gen {gen_num+1:03d} | Best True TAC (Overall): {overall_best_true_str} | ACO Obj: {self.best_costs_overall_dict['TAC_GA_optimizing']:.2f}")
+            print(f"{print_prefix}Gen {gen_num+1:03d} | Best True TAC (Overall): {overall_best_true_str} | ACO Obj: {self.best_costs_overall_dict[OBJ_KEY_OPTIMIZING]:.2f}")
 
     def inject_chromosome(self, chromosome):
         """ACO does not have a persistent population, so injection can be handled

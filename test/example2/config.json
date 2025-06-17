@@ -13,9 +13,9 @@
     },
     "core_optimization": {
         "model": "GA",
-        "population_size": 50,
-        "epochs": 20,
-        "generations_per_epoch": 30,
+        "population_size": 200,
+        "epochs": 10,
+        "generations_per_epoch": 50,
         "number_of_workers": 4,
         "num_stages": 0,
         "verbose": false,

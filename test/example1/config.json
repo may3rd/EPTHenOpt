@@ -13,17 +13,17 @@
     },
     "core_optimization": {
         "model": "GA",
-        "population_size": 20,
+        "population_size": 200,
         "epochs": 10,
-        "generations_per_epoch": 50,
-        "number_of_workers": 2,
+        "generations_per_epoch": 30,
+        "number_of_workers": 6,
         "num_stages": 0,
         "verbose": false,
         "no_split": false,
         "output_dir": "test/example1/output"
     },
     "problem_cost_parameters": {
-        "EMAT_setting": 3.0,
+        "EMAT_setting": 10.0,
         "default_U_overall": 0.8,
         "mininum_Q_limit": 1.0,
         "exchanger": {

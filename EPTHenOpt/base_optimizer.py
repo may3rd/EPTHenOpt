@@ -85,12 +85,11 @@ class BaseOptimizer:
             self.population.append(self._create_random_full_chromosome())
 
     def _create_random_full_chromosome(self):
-        z_part = np.random.randint(0, 2, size=self.len_Z)
-        r_hot_part = np.random.uniform(0.01, 1.0, size=self.len_R_hot_splits)
-        r_cold_part = np.random.uniform(0.01, 1.0, size=self.len_R_cold_splits)
-        return np.concatenate((z_part, r_hot_part, r_cold_part))
+        # --- call the function defined in HEN_model class.
+        return self.problem._create_random_full_chromosome()
 
     def _decode_chromosome(self, chromosome):
+        # --- call the function defined in HEN_model class.
         return self.problem._decode_chromosome(chromosome)
 
     # --- REFACTORED FITNESS CALCULATION ---
@@ -206,7 +205,7 @@ class BaseOptimizer:
     # In base_optimizer.py
 
     def _perform_sws(self, Z_ijk, FH_ijk, FC_ijk):
-        """Performs the Sequential Workspace Synthesis (SWS) calculation.
+        """Performs the Stage Wise Superstructure (SWS) calculation.
 
         This is a highly optimized hybrid implementation. It pre-allocates
         working arrays to minimize memory overhead inside the loops, while
@@ -398,7 +397,12 @@ class BaseOptimizer:
                     cap_cost = cu.fix_cost + cu.area_cost_coeff * (area ** cu.area_cost_exp)
                     op_cost = cu.cost * Q_needed
                     if cap_cost + op_cost < best_cu_choice['cost']:
-                        best_cu_choice = {'cost': cap_cost + op_cost, 'cap': cap_cost, 'op': op_cost, 'cu': cu, 'Area': area, 'Th_in': Th_in, 'Th_out': Th_out, 'util_Tin': Tc_in, 'util_Tout': Tc_out, 'Q':Q_needed}
+                        best_cu_choice = {'cost': cap_cost + op_cost,
+                                          'cap': cap_cost, 'op': op_cost, 
+                                          'cu': cu, 'Area': area,
+                                          'Th_in': Th_in, 'Th_out': Th_out,
+                                          'util_Tin': Tc_in, 'util_Tout': Tc_out,
+                                          'Q':Q_needed}
                 
                 if best_cu_choice['cost'] != float('inf'):
                     costs['capital_coolers'] += best_cu_choice['cap']
@@ -432,7 +436,12 @@ class BaseOptimizer:
                     cap_cost = hu.fix_cost + hu.area_cost_coeff * (area ** hu.area_cost_exp)
                     op_cost = hu.cost * Q_needed
                     if cap_cost + op_cost < best_hu_choice['cost']:
-                        best_hu_choice = {'cost': cap_cost + op_cost, 'cap': cap_cost, 'op': op_cost, 'hu': hu, 'Area': area, 'Tc_in': Tc_in, 'Tc_out': Tc_out, 'util_Tin': Th_in, 'util_Tout': Th_out, 'Q':Q_needed}
+                        best_hu_choice = {'cost': cap_cost + op_cost,
+                                          'cap': cap_cost, 'op': op_cost,
+                                          'hu': hu, 'Area': area,
+                                          'Tc_in': Tc_in, 'Tc_out': Tc_out,
+                                          'util_Tin': Th_in, 'util_Tout': Th_out,
+                                          'Q':Q_needed}
 
                 if best_hu_choice['cost'] != float('inf'):
                     costs['capital_heaters'] += best_hu_choice['cap']

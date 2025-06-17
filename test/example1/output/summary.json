@@ -1,19 +1,19 @@
 {
-    "TAC_GA_optimizing": 80498.54011580095,
-    "TAC_true_report": 80498.54011580095,
-    "total_co2_emissions": 20.00000446984407,
-    "capital_process_exchangers": 63586.02135085907,
-    "capital_heaters": 0.0,
-    "capital_coolers": 8912.516977004254,
-    "op_cost_hot_utility": 0.0,
-    "op_cost_cold_utility": 8000.001787937628,
-    "total_capital_cost": 72498.53832786332,
-    "total_operating_cost": 8000.001787937628,
-    "Q_hot_consumed_kW_actual": 0.0,
-    "Q_cold_consumed_kW_actual": 400.00008939688144,
+    "TAC_GA_optimizing": 89701.99236691643,
+    "TAC_true_report": 89701.99236691643,
+    "total_co2_emissions": 69.95018265214135,
+    "capital_process_exchangers": 49843.90926748868,
+    "capital_heaters": 2570.5121004609837,
+    "capital_coolers": 9307.497938110231,
+    "op_cost_hot_utility": 16000.000373380772,
+    "op_cost_cold_utility": 11980.072687475767,
+    "total_capital_cost": 61721.91930605989,
+    "total_operating_cost": 27980.07306085654,
+    "Q_hot_consumed_kW_actual": 200.00000466725965,
+    "Q_cold_consumed_kW_actual": 599.0036343737884,
     "penalty_total_in_GA_TAC": 0.0,
     "final_outlet_Th_after_utility": [
-        333.0,
+        333.033213322761,
         303.0
     ],
     "final_outlet_Tc_after_utility": [
@@ -23,6 +23,6 @@
     "penalty_pinch_deviation": 0.0,
     "penalty_forbidden_matches": 0.0,
     "penalty_required_matches": 0.0,
-    "penalty_EMAT_etc": 0.0,
-    "penalty_unmet_targets": 0.0
+    "penalty_unmet_targets": 0.0,
+    "penalty_EMAT_etc": 0.0
 }

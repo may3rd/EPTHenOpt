@@ -61,14 +61,16 @@ def main(args):
     hot_streams = [
         Stream(
             id_val=s['Name'], Tin=s['TIN_spec'], Tout_target=s['TOUT_spec'],
-            CP=s['Fcp'], stream_type='hot'
+            CP=s['Fcp'], stream_type='hot',
+            h_coeff=s['h_coeff'] if 'h_coeff' in s else None
         ) for s in loaded_hs_data
     ] if loaded_hs_data else []
 
     cold_streams = [
         Stream(
             id_val=s['Name'], Tin=s['TIN_spec'], Tout_target=s['TOUT_spec'],
-            CP=s['Fcp'], stream_type='cold'
+            CP=s['Fcp'], stream_type='cold',
+            h_coeff=s['h_coeff'] if 'h_coeff' in s else None
         ) for s in loaded_cs_data
     ] if loaded_cs_data else []
 
@@ -78,7 +80,8 @@ def main(args):
             U=u['U_overall'], cost_per_energy_unit=u['Unit_Cost_Energy'],
             fix_cost=u['Fixed_Cost_Unit'], area_cost_coeff=u['Area_Cost_Coeff'],
             area_cost_exp=u['Area_Cost_Exp'], utility_type='hot_utility',
-            co2_factor=float(u.get('co2_factor', args.default_co2_hot_utility or 0.0))
+            co2_factor=float(u.get('co2_factor', args.default_co2_hot_utility or 0.0)),
+            h_coeff=u['h_coeff'] if 'h_coeff' in u else None
         ) for u in loaded_hu_data
     ] if loaded_hu_data else []
 
@@ -88,7 +91,8 @@ def main(args):
             U=u['U_overall'], cost_per_energy_unit=u['Unit_Cost_Energy'],
             fix_cost=u['Fixed_Cost_Unit'], area_cost_coeff=u['Area_Cost_Coeff'],
             area_cost_exp=u['Area_Cost_Exp'], utility_type='cold_utility',
-            co2_factor=float(u.get('co2_factor', args.default_co2_cold_utility or 0.0))
+            co2_factor=float(u.get('co2_factor', args.default_co2_cold_utility or 0.0)),
+            h_coeff=u['h_coeff'] if 'h_coeff' in u else None
         ) for u in loaded_cu_data
     ] if loaded_cu_data else []
 

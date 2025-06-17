@@ -170,7 +170,8 @@ def load_data_from_csv(streams_filepath, utilities_filepath, matches_U_filepath=
                         'Type': row['Type'].lower(),
                         'TIN_spec': float(row['TIN_spec']),
                         'TOUT_spec': float(row['TOUT_spec']),
-                        'Fcp': float(row['Fcp'])
+                        'Fcp': float(row['Fcp']),
+                        'h_coeff': float(row.get('h_coeff', 0)),
                     }
                     # Optionally add h_coeff if it's in your CSV
                     # 'h_coeff': float(row.get('h_coeff', 0)) 
@@ -232,8 +233,8 @@ def load_data_from_csv(streams_filepath, utilities_filepath, matches_U_filepath=
                         'U_overall': float(row['U_overall']),
                         'Fixed_Cost_Unit': float(row['Fixed_Cost_Unit']),
                         'Area_Cost_Coeff': float(row['Area_Cost_Coeff']),
-                        'Area_Cost_Exp': float(row['Area_Cost_Exp'])
-                        # 'h_coeff': float(row.get('h_coeff', 0)) # Optional
+                        'Area_Cost_Exp': float(row['Area_Cost_Exp']),
+                        'h_coeff': float(row.get('h_coeff', 0)), # Optional
                     }
                     if util_data['Type'] == 'hot_utility': loaded_hot_utilities.append(util_data)
                     elif util_data['Type'] == 'cold_utility': loaded_cold_utilities.append(util_data)
@@ -686,7 +687,7 @@ def display_optimization_results(all_run_results, hen_problem_instance, model_na
                     print("    No Coolers.")
                 
                 if Q_hot_util_op_val > 1e-6 or Q_cold_util_op_val > 1e-6:
-                    print(f"\n  Utility Duty Summary:")
+                    print(f"  Utility Duty Summary:")
                     if Q_hot_util_op_val > 1e-6:
                         print(f"    Total Hot Utility: {heaters_count} Exchanger{'s' if coolers_count > 1 else ''}, total duty: {Q_hot_util_op_val:.2f} kW")
                     else:

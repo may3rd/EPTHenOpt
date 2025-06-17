@@ -1,0 +1,28 @@
+{
+    "TAC_GA_optimizing": 89701.92471543167,
+    "TAC_true_report": 89701.92471543167,
+    "total_co2_emissions": 69.95001043754309,
+    "capital_process_exchangers": 49843.917355902784,
+    "capital_heaters": 2570.512100465807,
+    "capital_coolers": 9307.491084045849,
+    "op_cost_hot_utility": 16000.000373436342,
+    "op_cost_cold_utility": 11980.003801580893,
+    "total_capital_cost": 61721.92054041444,
+    "total_operating_cost": 27980.004175017235,
+    "Q_hot_consumed_kW_actual": 200.00000466795427,
+    "Q_cold_consumed_kW_actual": 599.0001900790446,
+    "penalty_total_in_GA_TAC": 0.0,
+    "final_outlet_Th_after_utility": [
+        333.03332813273516,
+        303.0
+    ],
+    "final_outlet_Tc_after_utility": [
+        408.0,
+        413.0
+    ],
+    "penalty_pinch_deviation": 0.0,
+    "penalty_forbidden_matches": 0.0,
+    "penalty_required_matches": 0.0,
+    "penalty_unmet_targets": 0.0,
+    "penalty_EMAT_etc": 0.0
+}

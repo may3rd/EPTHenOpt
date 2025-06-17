@@ -84,6 +84,11 @@ class HENProblem:
 
         self.U_heaters = np.zeros((self.NHU, self.NC))
         self.U_coolers = np.zeros((self.NH, self.NCU))
+        
+        # --- Define the chromosome size for creating and decoding ---
+        self.len_Z = self.NH * self.NC * self.num_stages
+        self.len_R_hot_splits = self.NH * self.num_stages * self.NC
+        self.len_R_cold_splits = self.NC * self.num_stages * self.NH
 
         if cost_params:
             self.U_matrix_process.fill(cost_params.U_overall if cost_params.U_overall is not None else 0)
@@ -112,8 +117,7 @@ class HENProblem:
                     if self.U_matrix_process[i,j] == 0:
                         h_hot = self.hot_streams[i].h if self.hot_streams[i].h is not None and self.hot_streams[i].h > 1e-9 else 1e9
                         h_cold = self.cold_streams[j].h if self.cold_streams[j].h is not None and self.cold_streams[j].h > 1e-9 else 1e9
-                        if (self.hot_streams[i].h is None or self.hot_streams[i].h <= 1e-9) or \
-                           (self.cold_streams[j].h is None or self.cold_streams[j].h <= 1e-9):
+                        if h_hot <= 1e-9 or h_cold <= 1e-9:
                             self.U_matrix_process[i,j] = 1e-6
                         else:
                             self.U_matrix_process[i, j] = 1.0 / (1.0/h_hot + 1.0/h_cold)
@@ -123,11 +127,11 @@ class HENProblem:
                     for j in range(self.NC):
                         if self.U_heaters[iu,j] == 0:
                             h_hot_util = self.hot_utility[iu].h if self.hot_utility[iu].h is not None and self.hot_utility[iu].h > 1e-9 else 1e9
-                            if self.hot_utility[iu].U is not None:
+                            if self.hot_utility[iu].U >= 1e-9:
                                 self.U_heaters[iu,j] = self.hot_utility[iu].U
                             else:
                                 h_cold_stream = self.cold_streams[j].h if self.cold_streams[j].h is not None and self.cold_streams[j].h > 1e-9 else 1e9
-                                if (h_hot_util <=1e-9) or (h_cold_stream <= 1e-9):
+                                if h_hot_util <=1e-9 or h_cold_stream <= 1e-9:
                                     self.U_heaters[iu,j] = 1e-6
                                 else:
                                     self.U_heaters[iu,j] = 1.0 / (1.0/h_hot_util + 1.0/h_cold_stream)
@@ -137,11 +141,11 @@ class HENProblem:
                     for i in range(self.NH):
                         if self.U_coolers[i,ic] == 0:
                             h_cold_util = self.cold_utility[ic].h if self.cold_utility[ic].h is not None and self.cold_utility[ic].h > 1e-9 else 1e9
-                            if self.cold_utility[ic].U is not None:
+                            if self.cold_utility[ic].U >= 1e-9:
                                 self.U_coolers[i,ic] = self.cold_utility[ic].U
                             else:
                                 h_hot_stream = self.hot_streams[i].h if self.hot_streams[i].h is not None and self.hot_streams[i].h > 1e-9 else 1e9
-                                if (h_cold_util <=1e-9) or (h_hot_stream <= 1e-9):
+                                if h_cold_util <=1e-9 or h_hot_stream <= 1e-9:
                                     self.U_coolers[i,ic] = 1e-6
                                 else:
                                     self.U_coolers[i,ic] = 1.0 / (1.0/h_cold_util + 1.0/h_hot_stream)
@@ -230,12 +234,16 @@ class HENProblem:
         return q_h_min, q_c_min, t_pinch_hot, t_pinch_cold
 
     def _decode_chromosome(self, chromosome):
-        len_Z = self.NH * self.NC * self.num_stages
-        len_R_hot_splits = self.NH * self.num_stages * self.NC
-        z_part_flat = chromosome[:len_Z]
-        r_hot_part_flat = chromosome[len_Z : len_Z + len_R_hot_splits]
-        r_cold_part_flat = chromosome[len_Z + len_R_hot_splits:]
+        z_part_flat = chromosome[:self.len_Z]
+        r_hot_part_flat = chromosome[self.len_Z : self.len_Z + self.len_R_hot_splits]
+        r_cold_part_flat = chromosome[self.len_Z + self.len_R_hot_splits:]
         Z_ijk = z_part_flat.reshape((self.NH, self.NC, self.num_stages)).astype(int)
         R_hot_splits_decoded = r_hot_part_flat.reshape((self.NH, self.num_stages, self.NC))
         R_cold_splits_decoded = r_cold_part_flat.reshape((self.NC, self.num_stages, self.NH))
         return Z_ijk, R_hot_splits_decoded, R_cold_splits_decoded
+    
+    def _create_random_full_chromosome(self):
+        z_part = np.random.randint(0, 2, size=self.len_Z)
+        r_hot_part = np.random.uniform(0.0, 1.0, size=self.len_R_hot_splits)
+        r_cold_part = np.random.uniform(0.0, 1.0, size=self.len_R_cold_splits)
+        return np.concatenate((z_part, r_hot_part, r_cold_part))

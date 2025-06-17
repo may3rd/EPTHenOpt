@@ -11,7 +11,7 @@ import numpy as np
 import random
 
 from .hen_models import HENProblem
-from .utils import calculate_lmtd, OBJ_KEY_OPTIMIZING, OBJ_KEY_REPORT, OBJ_KEY_CO2
+from .utils import calculate_lmtd, OBJ_KEY_OPTIMIZING, OBJ_KEY_REPORT, OBJ_KEY_CO2, TRUE_TAC_KEY
 
 class BaseOptimizer:
     def __init__(self, 
@@ -172,6 +172,8 @@ class BaseOptimizer:
         NH, NC, ST = self.problem.NH, self.problem.NC, self.problem.num_stages
         FH_ijk = np.zeros((NH, NC, ST))
         FC_ijk = np.zeros((NH, NC, ST))
+        
+        epsilon = 1e-9 # A small number to prevent division by zero
 
         for k in range(ST):
             # Hot stream splits
@@ -183,10 +185,7 @@ class BaseOptimizer:
                 elif num_active > 1:
                     raw_r = R_hot_splits[i, k, active_indices]
                     sum_r = np.sum(raw_r)
-                    if sum_r > 1e-6:
-                        FH_ijk[i, active_indices, k] = raw_r / sum_r
-                    else:
-                        FH_ijk[i, active_indices, k] = 1.0 / num_active
+                    FH_ijk[i, active_indices, k] = raw_r / (sum_r + epsilon)
             
             # Cold stream splits
             for j in range(NC):
@@ -197,10 +196,8 @@ class BaseOptimizer:
                 elif num_active > 1:
                     raw_r = R_cold_splits[j, k, active_indices]
                     sum_r = np.sum(raw_r)
-                    if sum_r > 1e-6:
-                        FC_ijk[active_indices, j, k] = raw_r / sum_r
-                    else:
-                        FC_ijk[active_indices, j, k] = 1.0 / num_active
+                    FC_ijk[active_indices, j, k] = raw_r / (sum_r + epsilon)
+                    
         return FH_ijk, FC_ijk
     # In base_optimizer.py
 
@@ -306,8 +303,8 @@ class BaseOptimizer:
 
             if delta_H < self.sws_conv_tol and delta_C < self.sws_conv_tol and sws_iter > 0:
                 return {"converged": True, "Q_ijk": Q_ijk, "T_mix_H": T_mix_H, "T_mix_C": T_mix_C,
-                        "final_Th_after_recovery": T_mix_H[:, -1] if ST > 0 else self._hs_Tin,
-                        "final_Tc_after_recovery": T_mix_C[:, 0] if ST > 0 else self._cs_Tin}
+                        "final_Th_after_recovery": T_mix_H[:, -1],
+                        "final_Tc_after_recovery": T_mix_C[:, 0]}
 
         return {"converged": False, "Q_ijk": np.zeros((NH, NC, ST)),
                     "T_mix_H": np.empty((NH, ST)), "T_mix_C": np.empty((NC, ST)),
@@ -329,15 +326,15 @@ class BaseOptimizer:
                 for j in range(NC):
                     if Z_ijk[i, j, k] == 1 and Q_ijk[i, j, k] > 1e-6:
                         hs, cs = self.problem.hot_streams[i], self.problem.cold_streams[j]
-                        Q = Q_ijk[i, j, k]
-                        
-                        Th_in = T_mix_H[i, k-1] if k > 0 else hs.Tin
-                        Tc_in = T_mix_C[j, k+1] if k < ST-1 else cs.Tin
                         CPH_b = hs.CP * FH_ijk[i,j,k]
                         CPC_b = cs.CP * FC_ijk[i,j,k]
                         
                         if CPH_b < 1e-9 or CPC_b < 1e-9: continue
                         
+                        Q = Q_ijk[i, j, k]
+                        
+                        Th_in = T_mix_H[i, k-1] if k > 0 else hs.Tin
+                        Tc_in = T_mix_C[j, k+1] if k < ST-1 else cs.Tin
                         Th_out = Th_in - Q / CPH_b
                         Tc_out = Tc_in + Q / CPC_b
 

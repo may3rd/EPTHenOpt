@@ -10,7 +10,9 @@ import copy
 import numpy as np
 
 from .base_optimizer import BaseOptimizer
-from .utils import OBJ_KEY_OPTIMIZING, OBJ_KEY_REPORT, OBJ_KEY_CO2
+from .utils import OBJ_KEY_OPTIMIZING, OBJ_KEY_REPORT, OBJ_KEY_CO2, TRUE_TAC_KEY
+
+from typing import Any
 
 class Particle:
     """Represents a single particle in the PSO swarm."""
@@ -19,7 +21,7 @@ class Particle:
         self.velocity = np.random.uniform(-1, 1, len(chromosome))
         self.pbest_position = chromosome.copy()
         self.pbest_fitness = float('inf')
-        self.pbest_details = None
+        self.pbest_details: Any = None
         self.bounds = problem_bounds
 
     def update_velocity(self, gbest_position, w, c1, c2):
@@ -94,7 +96,7 @@ class ParticleSwarmOptimizationHEN(BaseOptimizer):
 
         if self.verbose:
             print_prefix = f"Run {run_id_for_print} - PSO - " if run_id_for_print else "PSO - "
-            overall_best_true_str = f"{self.best_costs_overall_dict['TAC_true_report']:.2f}" if self.best_costs_overall_dict.get('TAC_true_report') != float('inf') else "Inf"
+            overall_best_true_str = f"{self.best_costs_overall_dict[TRUE_TAC_KEY]:.2f}" if self.best_costs_overall_dict.get(TRUE_TAC_KEY) != float('inf') else "Inf"
             print(f"{print_prefix}Gen {gen_num+1:03d} | Best True TAC (Overall): {overall_best_true_str} | PSO Obj: {self.gbest_fitness:.2f}")
 
     def inject_chromosome(self, chromosome):

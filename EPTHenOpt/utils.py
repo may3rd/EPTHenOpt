@@ -21,6 +21,7 @@ MIN_LMTD = 1e-6
 OBJ_KEY_OPTIMIZING = "TAC_GA_optimizing"
 OBJ_KEY_REPORT = "TAC_true_report"
 OBJ_KEY_CO2 = "total_co2_emissions"
+TRUE_TAC_KEY = "TAC_true_report"
 
 def calculate_lmtd(Th_in, Th_out, Tc_in, Tc_out):
     """Calculates the Log Mean Temperature Difference (LMTD).
@@ -470,8 +471,8 @@ def export_multi_objective_results(pareto_front, output_dir):
         costs = solution['costs']
         rows.append({
             "Solution_ID": i + 1,
-            "TAC_true_report": costs.get('TAC_true_report'),
-            "Total_CO2_Emissions_kg_per_hr": costs.get('total_co2_emissions'),
+            "TAC_true_report": costs.get(TRUE_TAC_KEY),
+            "Total_CO2_Emissions_kg_per_hr": costs.get(OBJ_KEY_CO2),
             "Total_Capital_Cost": costs.get('total_capital_cost'),
             "Total_Operating_Cost": costs.get('total_operating_cost'),
             "Hot_Utility_kW": costs.get('Q_hot_consumed_kW_actual'),
@@ -536,7 +537,7 @@ def display_optimization_results(all_run_results, hen_problem_instance, model_na
 
             # The key used for optimization (e.g., OBJ_KEY_OPTIMIZING or a similar objective for TLBO)
             objective_val = run_result['costs'].get(OBJ_KEY_OPTIMIZING, float('inf')) 
-            true_tac_for_display = run_result['costs'].get('TAC_true_report', float('inf'))
+            true_tac_for_display = run_result['costs'].get(TRUE_TAC_KEY, float('inf'))
 
             objective_val_str = f"{objective_val:.2f}" if objective_val != float('inf') else "Inf"
             true_tac_str = f"{true_tac_for_display:.2f}" if true_tac_for_display != float('inf') else "Inf"
@@ -551,8 +552,9 @@ def display_optimization_results(all_run_results, hen_problem_instance, model_na
         best_run_final_info['costs'] is not None and \
         best_run_final_info['costs'].get(OBJ_KEY_OPTIMIZING, float('inf')) != float('inf'): # Check against the optimizing TAC
             
-            overall_best_true_tac_val = best_run_final_info['costs'].get('TAC_true_report', float('inf'))
-            # overall_best_ga_tac_val = best_run_final_info['costs'].get(OBJ_KEY_OPTIMIZING, float('inf')) # Already have this in best_overall_objective_val
+            costs_to_print = best_run_final_info['costs']
+            
+            overall_best_true_tac_val = costs_to_print.get(TRUE_TAC_KEY, float('inf'))
 
             true_tac_overall_str = f"{overall_best_true_tac_val:.2f}" if overall_best_true_tac_val != float('inf') else "Inf"
             optimized_obj_overall_str = f"{best_overall_objective_val:.2f}" if best_overall_objective_val != float('inf') else "Inf"
@@ -560,16 +562,24 @@ def display_optimization_results(all_run_results, hen_problem_instance, model_na
             print(f"\nBest True TAC found across all runs (corresponding to best Optimized Objective): {true_tac_overall_str}")
             print(f"  (This solution had an Optimized Objective of: {optimized_obj_overall_str})")
             print(f"  Best solution from Seed: {best_run_final_info.get('seed', 'N/A')}")
+
+            total_capex_cost = costs_to_print.get('capital_process_exchangers', 0) + \
+                                costs_to_print.get('capital_heaters', 0) + \
+                                costs_to_print.get('capital_coolers', 0)
+            total_op_cost = costs_to_print.get('op_cost_hot_utility', 0) + \
+                             costs_to_print.get('op_cost_cold_utility', 0)
             
-            costs_to_print = best_run_final_info['costs']
             print("\nCost Breakdown for the Best Overall Solution:")
             print(f"  Optimized Objective : {costs_to_print.get(OBJ_KEY_OPTIMIZING,0):.2f}")
-            print(f"  True TAC            : {costs_to_print.get('TAC_true_report', 0):.2f}")
-            print(f"  CapEx (Process Ex.) : {costs_to_print.get('capital_process_exchangers',0):.2f}")
-            print(f"  CapEx (Heaters)     : {costs_to_print.get('capital_heaters',0):.2f}")
-            print(f"  CapEx (Coolers)     : {costs_to_print.get('capital_coolers',0):.2f}")
-            print(f"  OpEx (Hot Utility)  : {costs_to_print.get('op_cost_hot_utility',0):.2f}")
-            print(f"  OpEx (Cold Utility) : {costs_to_print.get('op_cost_cold_utility',0):.2f}")
+            print(f"  True TAC            : {costs_to_print.get(TRUE_TAC_KEY, 0):.2f}")
+            print(f"  Total CAPEX.        : {total_capex_cost:.2f}")
+            print(f"  Total OPEX.         : {total_op_cost:.2f}")
+            print(f"  Detailed Cost Breakdown:")
+            print(f"    CapEx (Process Ex.) : {costs_to_print.get('capital_process_exchangers',0):.2f}")
+            print(f"    CapEx (Heaters)     : {costs_to_print.get('capital_heaters',0):.2f}")
+            print(f"    CapEx (Coolers)     : {costs_to_print.get('capital_coolers',0):.2f}")
+            print(f"    OpEx (Hot Utility)  : {costs_to_print.get('op_cost_hot_utility',0):.2f}")
+            print(f"    OpEx (Cold Utility) : {costs_to_print.get('op_cost_cold_utility',0):.2f}")
             
             penalty_keys = [k for k in costs_to_print if "penalty" in k.lower() and costs_to_print.get(k, 0) > 1e-6]
             if penalty_keys:

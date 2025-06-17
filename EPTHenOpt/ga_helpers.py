@@ -12,7 +12,7 @@ import copy
 import numpy as np
 
 from .base_optimizer import BaseOptimizer
-from .utils import OBJ_KEY_OPTIMIZING, OBJ_KEY_REPORT # Import the new base class
+from .utils import OBJ_KEY_OPTIMIZING, OBJ_KEY_REPORT, TRUE_TAC_KEY # Import the new base class
 
 class GAVariationMixin:
     """
@@ -215,23 +215,35 @@ class GeneticAlgorithmHEN(BaseOptimizer, GAVariationMixin):
         
         if self.verbose:
             print_prefix = f"Run {run_id_for_print} - GA - " if run_id_for_print else "GA - "
-            overall_best_true_str = f"{self.best_costs_overall_dict['TAC_true_report']:.2f}" if self.best_costs_overall_dict.get('TAC_true_report') != float('inf') else "Inf"
+            overall_best_true_str = f"{self.best_costs_overall_dict[TRUE_TAC_KEY]:.2f}" if self.best_costs_overall_dict.get(TRUE_TAC_KEY) != float('inf') else "Inf"
             print(f"{print_prefix}Gen {gen_num+1:03d} | Best True TAC (Overall): {overall_best_true_str} | GA Obj: {best_ga_tac_this_gen:.2f}")
 
 
 
     def inject_chromosome(self, chromosome):
-        """Injects an external chromosome into the population, replacing the worst member if elitism is active."""
-        if self.population:
-            # To effectively replace the worst, we would typically evaluate all, sort, and replace.
-            # For simplicity with elitism, if the new chromosome is better than the worst elite,
-            # it might not get in. A common strategy is to just add it and let selection sort it out,
-            # or replace a random non-elite, or the actual worst one.
-            # Current GA sorts by TAC_GA_optimizing, so last one after sort is worst.
-            # This requires re-evaluating and re-sorting if we want to be precise.
-            # A simpler approach for injection: add and re-sort or replace the absolute worst.
-            
-            # For now, using the strategy: replace the last element (likely worst after sorting in evolve_one_generation)
-            self.population[-1] = chromosome.copy()
-            # Optionally, re-evaluate the new chromosome's fitness immediately if needed by GA's flow,
-            # though evolve_one_generation will do it at the start of the next generation.
+        """
+        ### REFINED ###
+        Injects an external chromosome from migration into the population
+        by replacing the current worst member.
+        """
+        if not self.population or not self.fitnesses:
+            # If population/fitness not ready, just replace a random member
+            if self.population:
+                self.population[random.randint(0, self.population_size - 1)] = chromosome.copy()
+            return
+
+        # Find the index of the worst individual based on the optimizing fitness key
+        worst_fitness = -1
+        worst_idx = -1
+        for i, fitness_dict in enumerate(self.fitnesses):
+            current_fitness = fitness_dict.get(OBJ_KEY_OPTIMIZING, float('inf'))
+            if current_fitness > worst_fitness:
+                worst_fitness = current_fitness
+                worst_idx = i
+
+        # Replace the worst individual if one was found
+        if worst_idx != -1:
+            self.population[worst_idx] = chromosome.copy()
+            # Invalidate its old fitness so it gets re-evaluated in the next generation
+            self.fitnesses[worst_idx] = {OBJ_KEY_OPTIMIZING: float('inf')} 
+            print(f"  -> Injected chromosome replaced member {worst_idx} with fitness {worst_fitness:.2f}")

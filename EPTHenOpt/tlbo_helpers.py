@@ -11,7 +11,7 @@ import numpy as np
 import random
 
 from .base_optimizer import BaseOptimizer
-from .utils import OBJ_KEY_OPTIMIZING, OBJ_KEY_REPORT, OBJ_KEY_CO2
+from .utils import OBJ_KEY_OPTIMIZING, OBJ_KEY_REPORT, OBJ_KEY_CO2, TRUE_TAC_KEY
 
 class TeachingLearningBasedOptimizationHEN(BaseOptimizer):
     def __init__(self,
@@ -171,7 +171,7 @@ class TeachingLearningBasedOptimizationHEN(BaseOptimizer):
     
         if self.verbose:
             print_prefix = f"Run {run_id_for_print} - PSO - " if run_id_for_print else "PSO - "
-            overall_best_true_str = f"{self.best_costs_overall_dict['TAC_true_report']:.2f}" if self.best_costs_overall_dict.get('TAC_true_report') != float('inf') else "Inf"
+            overall_best_true_str = f"{self.best_costs_overall_dict[TRUE_TAC_KEY]:.2f}" if self.best_costs_overall_dict.get(TRUE_TAC_KEY) != float('inf') else "Inf"
             best_obj_str = f"{self.best_costs_overall_dict[OBJ_KEY_OPTIMIZING]:.2f}" if self.best_costs_overall_dict.get(OBJ_KEY_OPTIMIZING) != float('inf') else "Inf"
             print(f"{print_prefix}Gen {gen_num+1:03d} | Best True TAC (Overall): {overall_best_true_str} | TLBO Obj: {best_obj_str}")
 

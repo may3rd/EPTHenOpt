@@ -124,7 +124,7 @@ def test_calculate_fitness_feasible_solution(ga_optimizer_for_testing):
     assert isinstance(details, list)
 
     assert np.isfinite(costs['TAC_GA_optimizing']), "TAC_GA_optimizing should be finite for a feasible solution"
-    assert np.isfinite(costs['TAC_true_report']), "TAC_true_report should be finite"
+    assert np.isfinite(costs[TRUE_TAC_KEY]), "TAC_true_report should be finite"
     
     # Check that major penalties are zero or very small
     # These thresholds might need adjustment based on the exact problem and solution
@@ -169,7 +169,7 @@ def test_sws_non_convergence_early_exit(ga_optimizer_for_testing, minimal_hen_pr
 
     costs, details = optimizer_sws_fail._calculate_fitness(FEASIBLE_CHROMOSOME)
 
-    assert not np.isfinite(costs['TAC_true_report']), "True TAC should be inf on SWS failure"
+    assert not np.isfinite(costs[TRUE_TAC_KEY]), "True TAC should be inf on SWS failure"
     assert 'penalty_SWS_non_convergence' in costs
     assert costs['penalty_SWS_non_convergence'] > 0, "SWS non-convergence penalty should be applied"
     

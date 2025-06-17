@@ -17,7 +17,7 @@
         "epochs": 10,
         "generations_per_epoch": 50,
         "number_of_workers": 4,
-        "num_stages": 0,
+        "num_stages": 4,
         "verbose": false,
         "no_split": false,
         "output_dir": "test/example2/output"

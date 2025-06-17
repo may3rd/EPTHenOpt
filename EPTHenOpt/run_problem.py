@@ -12,6 +12,7 @@ import sys
 import json
 from pathlib import Path
 import time
+from tqdm import tqdm
 
 # Use relative imports to prevent installation conflicts
 from .hen_models import Stream, Utility, CostParameters, HENProblem
@@ -24,7 +25,7 @@ from .nsga2_helpers import NSGAIIHEN
 from .utils import (
     load_data_from_csv, display_optimization_results,
     display_problem_summary, display_help,
-    OBJ_KEY_OPTIMIZING, OBJ_KEY_REPORT, OBJ_KEY_CO2
+    OBJ_KEY_OPTIMIZING, OBJ_KEY_REPORT, OBJ_KEY_CO2, TRUE_TAC_KEY
 )
 from .cores import run_parallel_with_migration
 
@@ -208,17 +209,16 @@ def main(args):
             
             solver = solver_class(problem=hen_problem, population_size=args.population_size, **solver_params)
 
-            for epoch in range(args.epochs):
+            for epoch in tqdm(range(args.epochs), desc="Epochs Progress"):
                 print(f"\n--- Starting Epoch {epoch + 1}/{args.epochs} ---")
                 solver.run_epoch(
                     generations_in_epoch=args.generations_per_epoch,
                     current_gen_offset=epoch * args.generations_per_epoch,
                     run_id="sequential"
                 )
-                best_costs = solver.best_costs_overall_dict
-                if best_costs and best_costs.get(OBJ_KEY_OPTIMIZING) != float('inf'):
-                    current_best_obj = best_costs.get(OBJ_KEY_OPTIMIZING, float('inf'))
-                    print(f"--- Epoch {epoch+1}/{args.epochs} complete. Current Best Obj.: {current_best_obj:.2f} ---")
+                # You can update the progress bar's description with the lates cost
+                best_costs = solver.best_costs_overall_dict.get(OBJ_KEY_REPORT, float('inf'))
+                tqdm.write(f"Epoch {epoch+1}/{args.epochs} complete. Current Best Obj.: {best_costs:.2f}")
 
             run_results = [(0, solver.best_chromosome_overall, solver.best_costs_overall_dict, solver.best_details_overall)]
         else:

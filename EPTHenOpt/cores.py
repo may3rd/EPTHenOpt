@@ -98,8 +98,14 @@ def optimization_worker(
             
             if best_chromosome is not None:
                 try:
-                    migration_queue.put(best_chromosome, block=False, timeout=0.1)
-                    incoming_chromosome = migration_queue.get(block=True, timeout=0.5)
+                    # Try to send our best solution
+                    # migration_queue.put(best_chromosome, block=False, timeout=0.1)
+                    migration_queue.put_nowait(best_chromosome)
+                    
+                    # Try to receive a solution from another worker
+                    # incoming_chromosome = migration_queue.get(block=True, timeout=0.5)
+                    incoming_chromosome = migration_queue.get_nowait()
+                    
                     solver.inject_chromosome(incoming_chromosome)
                     print(f"Worker {worker_id}: Migration successful at epoch {epoch+1}.")
                 except (queue.Full, queue.Empty):

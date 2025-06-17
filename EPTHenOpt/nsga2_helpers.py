@@ -8,7 +8,7 @@ import copy
 import numpy as np
 
 from .base_optimizer import BaseOptimizer
-from .utils import OBJ_KEY_OPTIMIZING, OBJ_KEY_REPORT, OBJ_KEY_CO2
+from .utils import OBJ_KEY_OPTIMIZING, OBJ_KEY_REPORT, OBJ_KEY_CO2, TRUE_TAC_KEY
 
 class NSGAIIHEN(BaseOptimizer):
     """
@@ -54,8 +54,8 @@ class NSGAIIHEN(BaseOptimizer):
         p_costs = p['costs']
         q_costs = q['costs']
         # Objectives to minimize
-        obj_p = np.array([p_costs.get('TAC_true_report', float('inf')), p_costs.get('total_co2_emissions', float('inf'))])
-        obj_q = np.array([q_costs.get('TAC_true_report', float('inf')), q_costs.get('total_co2_emissions', float('inf'))])
+        obj_p = np.array([p_costs.get(TRUE_TAC_KEY, float('inf')), p_costs.get(OBJ_KEY_CO2, float('inf'))])
+        obj_q = np.array([q_costs.get(TRUE_TAC_KEY, float('inf')), q_costs.get(OBJ_KEY_CO2, float('inf'))])
         
         return np.all(obj_p <= obj_q) and np.any(obj_p < obj_q)
 
@@ -68,7 +68,7 @@ class NSGAIIHEN(BaseOptimizer):
             p['crowding_distance'] = 0
             
         num_objectives = 2 # TAC and CO2
-        obj_keys = ['TAC_true_report', 'total_co2_emissions']
+        obj_keys = [TRUE_TAC_KEY, OBJ_KEY_CO2]
 
         for m in range(num_objectives):
             key = obj_keys[m]

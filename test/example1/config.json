@@ -13,10 +13,10 @@
     },
     "core_optimization": {
         "model": "GA",
-        "population_size": 100,
+        "population_size": 200,
         "epochs": 10,
-        "generations_per_epoch": 30,
-        "number_of_workers": 1,
+        "generations_per_epoch": 100,
+        "number_of_workers": 4,
         "num_stages": 0,
         "verbose": false,
         "no_split": false,

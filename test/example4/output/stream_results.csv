@@ -1,8 +1,0 @@
-Stream_ID,Stream_Type,Initial_Tin_K,Target_Tout_K,Final_Tout_K,Is_Target_Met
-H1,hot,626.0,586.0,586.0,True
-H2,hot,620.0,519.0,519.0004618245349,False
-H3,hot,528.0,353.0,353.0,True
-C1,cold,497.0,613.0,613.0,True
-C2,cold,389.0,576.0,576.0,True
-C3,cold,326.0,386.0,386.0,True
-C4,cold,313.0,566.0,566.0,True

@@ -9,6 +9,9 @@ This module contains the core classes for defining a HEN problem, including:
 *   ``HENProblem``: The main class that aggregates all problem data.
 """
 import numpy as np
+import random
+from typing import List, Any, Optional
+from numpy.typing import NDArray
 
 class Stream:
     def __init__(self, id_val=None, Tin=None, Tout_target=None, CP=None,
@@ -86,9 +89,11 @@ class HENProblem:
         self.U_coolers = np.zeros((self.NH, self.NCU))
         
         # --- Define the chromosome size for creating and decoding ---
-        self.len_Z = self.NH * self.NC * self.num_stages
-        self.len_R_hot_splits = self.NH * self.num_stages * self.NC
-        self.len_R_cold_splits = self.NC * self.num_stages * self.NH
+        self.len_Z: int = self.NH * self.NC * self.num_stages
+        # self.len_R_hot_splits = self.NH * self.num_stages * self.NC
+        # self.len_R_cold_splits = self.NC * self.num_stages * self.NH
+        self.len_R_hot_splits: int = 0 if self.no_split else self.NH * self.num_stages * self.NC
+        self.len_R_cold_splits: int = 0 if self.no_split else self.NC * self.num_stages * self.NH
 
         if cost_params:
             self.U_matrix_process.fill(cost_params.U_overall if cost_params.U_overall is not None else 0)
@@ -111,7 +116,7 @@ class HENProblem:
                     self.area_cost_process_coeff[i,j] = float(match_spec.get('area_cost_coeff', self.area_cost_process_coeff[i,j]))
                     self.area_cost_process_exp[i,j] = float(match_spec.get('area_cost_exp', self.area_cost_process_exp[i,j]))
 
-        if cost_params and cost_params.U_overall is None:
+        if np.any(self.U_matrix_process == 0):
             for i in range(self.NH):
                 for j in range(self.NC):
                     if self.U_matrix_process[i,j] == 0:
@@ -235,15 +240,47 @@ class HENProblem:
 
     def _decode_chromosome(self, chromosome):
         z_part_flat = chromosome[:self.len_Z]
-        r_hot_part_flat = chromosome[self.len_Z : self.len_Z + self.len_R_hot_splits]
-        r_cold_part_flat = chromosome[self.len_Z + self.len_R_hot_splits:]
         Z_ijk = z_part_flat.reshape((self.NH, self.NC, self.num_stages)).astype(int)
-        R_hot_splits_decoded = r_hot_part_flat.reshape((self.NH, self.num_stages, self.NC))
-        R_cold_splits_decoded = r_cold_part_flat.reshape((self.NC, self.num_stages, self.NH))
+        if self.no_split:
+            R_hot_splits_decoded = []
+            R_cold_splits_decoded = []
+        else:
+            r_hot_part_flat = chromosome[self.len_Z : self.len_Z + self.len_R_hot_splits]
+            r_cold_part_flat = chromosome[self.len_Z + self.len_R_hot_splits:]
+            R_hot_splits_decoded = r_hot_part_flat.reshape((self.NH, self.num_stages, self.NC))
+            R_cold_splits_decoded = r_cold_part_flat.reshape((self.NC, self.num_stages, self.NH))
         return Z_ijk, R_hot_splits_decoded, R_cold_splits_decoded
     
     def _create_random_full_chromosome(self):
-        z_part = np.random.randint(0, 2, size=self.len_Z)
-        r_hot_part = np.random.uniform(0.0, 1.0, size=self.len_R_hot_splits)
-        r_cold_part = np.random.uniform(0.0, 1.0, size=self.len_R_cold_splits)
-        return np.concatenate((z_part, r_hot_part, r_cold_part))
+        NH, NC, ST = self.NH, self.NC, self.num_stages
+        Z_ijk = np.zeros((NH, NC, ST), dtype=float) # Set type to float because in PSO method they will be update by velocity
+        if self.no_split:
+            # For each stage, create a one-to-one matching
+            for k in range(ST):
+                # Get available indices
+                hot_indices = list(range(NH))
+                cold_indices = list(range(NC))
+                # Pair up to the minimum number of streams
+                num_pairs = min(NH, NC)
+                # Randomly select pairs
+                random.shuffle(hot_indices)
+                random.shuffle(cold_indices)
+                for i, j in zip(hot_indices[:num_pairs], cold_indices[:num_pairs]):
+                    Z_ijk[i, j, k] = 1
+            # No split ratios needed
+            return Z_ijk.flatten()
+        else:
+            # Split case: Allow multiple matches per stream
+            for k in range(ST):
+                for i in range(NH):
+                    if random.random() < 0.5:  # Randomly decide if stream has an exchanger
+                        j = random.randint(0, NC-1)
+                        Z_ijk[i, j, k] = 1
+                for j in range(NC):
+                    if random.random() < 0.5:
+                        i = random.randint(0, NH-1)
+                        Z_ijk[i, j, k] = 1
+            # Generate random split ratios
+            R_hot_splits = np.random.rand(NH, ST, NC)
+            R_cold_splits = np.random.rand(NC, ST, NH)
+            return np.concatenate([Z_ijk.flatten(), R_hot_splits.flatten(), R_cold_splits.flatten()])

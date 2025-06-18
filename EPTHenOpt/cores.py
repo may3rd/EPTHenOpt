@@ -92,7 +92,8 @@ def optimization_worker(
             if best_costs and best_costs.get(OBJ_KEY_OPTIMIZING) != float('inf'):
                 current_best_obj = best_costs.get(OBJ_KEY_OPTIMIZING, float('inf'))
                 current_true_best_obj = best_costs.get(OBJ_KEY_REPORT, float('inf'))
-                print(f"Worker {worker_id}: Epoch {epoch+1}/{epochs} complete. Current Best Obj.: {current_best_obj:.2f}, TAC: {current_true_best_obj:.2f}")
+                current_penalty = best_costs.get("penalty_total_in_GA_TAC", float(9999.99))
+                print(f"Worker {worker_id}: Epoch {epoch+1}/{epochs} complete. Current Best Obj.: {current_best_obj:.2f}, TAC: {current_true_best_obj:.2f}, Penalty: {current_penalty:.2f}")
 
             best_chromosome = solver.get_best_chromosome()
             

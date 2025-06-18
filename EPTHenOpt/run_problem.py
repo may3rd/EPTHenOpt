@@ -63,7 +63,7 @@ def main(args):
         Stream(
             id_val=s['Name'], Tin=s['TIN_spec'], Tout_target=s['TOUT_spec'],
             CP=s['Fcp'], stream_type='hot',
-            h_coeff=s['h_coeff'] if 'h_coeff' in s else None
+            h_coeff=s['h_coeff'] if 'h_coeff' in s else -999.99
         ) for s in loaded_hs_data
     ] if loaded_hs_data else []
 
@@ -71,7 +71,7 @@ def main(args):
         Stream(
             id_val=s['Name'], Tin=s['TIN_spec'], Tout_target=s['TOUT_spec'],
             CP=s['Fcp'], stream_type='cold',
-            h_coeff=s['h_coeff'] if 'h_coeff' in s else None
+            h_coeff=s['h_coeff'] if 'h_coeff' in s else -999.99
         ) for s in loaded_cs_data
     ] if loaded_cs_data else []
 
@@ -82,7 +82,7 @@ def main(args):
             fix_cost=u['Fixed_Cost_Unit'], area_cost_coeff=u['Area_Cost_Coeff'],
             area_cost_exp=u['Area_Cost_Exp'], utility_type='hot_utility',
             co2_factor=float(u.get('co2_factor', args.default_co2_hot_utility or 0.0)),
-            h_coeff=u['h_coeff'] if 'h_coeff' in u else None
+            h_coeff=u['h_coeff'] if 'h_coeff' in u else -999.99
         ) for u in loaded_hu_data
     ] if loaded_hu_data else []
 
@@ -93,7 +93,7 @@ def main(args):
             fix_cost=u['Fixed_Cost_Unit'], area_cost_coeff=u['Area_Cost_Coeff'],
             area_cost_exp=u['Area_Cost_Exp'], utility_type='cold_utility',
             co2_factor=float(u.get('co2_factor', args.default_co2_cold_utility or 0.0)),
-            h_coeff=u['h_coeff'] if 'h_coeff' in u else None
+            h_coeff=u['h_coeff'] if 'h_coeff' in u else -999.99
         ) for u in loaded_cu_data
     ] if loaded_cu_data else []
 
@@ -125,6 +125,7 @@ def main(args):
         cooler_area_exp=args.cooler_area_exp,
         U_overall=args.default_U_overall,
         EMAT=args.EMAT_setting,
+        # lmtd_method=args.LMTD_method.lower() if args.LMTD_method else "chen"
         )
     
     num_stages = args.num_stages if args.num_stages > 0 else max(1, len(hot_streams), len(cold_streams))
@@ -218,7 +219,8 @@ def main(args):
                 )
                 # You can update the progress bar's description with the lates cost
                 best_costs = solver.best_costs_overall_dict.get(OBJ_KEY_REPORT, float('inf'))
-                tqdm.write(f"Epoch {epoch+1}/{args.epochs} complete. Current Best Obj.: {best_costs:.2f}")
+                current_penalty = solver.best_costs_overall_dict.get("penalty_total_in_GA_TAC", float(9999.99))
+                tqdm.write(f"Epoch {epoch+1}/{args.epochs} complete. Current Best Obj.: {best_costs:.2f} with penalty: {current_penalty:.2f}")
 
             run_results = [(0, solver.best_chromosome_overall, solver.best_costs_overall_dict, solver.best_details_overall)]
         else:
@@ -295,6 +297,7 @@ def cli():
 
     problem_group = parser.add_argument_group('Problem & Cost Parameters')
     problem_group.add_argument('--EMAT_setting', type=float)
+    problem_group.add_argument('--LMTD_method', type=str)
     problem_group.add_argument('--default_U_overall', type=float)
     problem_group.add_argument('--mininum_Q_limit', type=float)
     # Separated cost parameters

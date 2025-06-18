@@ -23,7 +23,7 @@ OBJ_KEY_REPORT = "TAC_true_report"
 OBJ_KEY_CO2 = "total_co2_emissions"
 TRUE_TAC_KEY = "TAC_true_report"
 
-def calculate_lmtd(Th_in, Th_out, Tc_in, Tc_out):
+def calculate_lmtd(Th_in, Th_out, Tc_in, Tc_out, lmtd_method="std"):
     """Calculates the Log Mean Temperature Difference (LMTD).
 
     This function includes robust checks for temperature crosses and avoids
@@ -39,7 +39,9 @@ def calculate_lmtd(Th_in, Th_out, Tc_in, Tc_out):
         Inlet temperature of the cold stream, [K].
     Tc_out : float
         Outlet temperature of the cold stream, [K].
-
+    lmtd_method : str, optional
+        Select the LMTD calculation method. Default is Chen Approximation method.
+        
     Returns
     -------
     float
@@ -78,8 +80,12 @@ def calculate_lmtd(Th_in, Th_out, Tc_in, Tc_out):
         return delta_T1 
         
     try:
-        # Standard LMTD formula calculation
-        lmtd_val = (delta_T1 - delta_T2) / math.log(delta_T1 / delta_T2)
+        if lmtd_method.lower() == "chen":
+            # Chen Approximation Method
+            lmtd_val = (delta_T1 * delta_T2 * (delta_T1 + delta_T2) / 2) ** (1.0 / 3.0)
+        else:
+            # Standard LMTD formula calculation
+            lmtd_val = (delta_T1 - delta_T2) / math.log(delta_T1 / delta_T2)
         
         # Final check to ensure the result is a valid, positive number
         if not math.isfinite(lmtd_val) or lmtd_val < MIN_LMTD:
@@ -231,14 +237,15 @@ def load_data_from_csv(streams_filepath, utilities_filepath, matches_U_filepath=
                         'TIN_utility': float(row['TIN_utility']),
                         'TOUT_utility': float(row['TOUT_utility']),
                         'Unit_Cost_Energy': float(row['Unit_Cost_Energy']),
-                        'U_overall': float(row['U_overall']),
+                        'U_overall': float(row.get('U_overall', 0)),
+                        'Fixed_Cost_Unit': float(row['Fixed_Cost_Unit']),
                         'Fixed_Cost_Unit': float(row['Fixed_Cost_Unit']),
                         'Area_Cost_Coeff': float(row['Area_Cost_Coeff']),
                         'Area_Cost_Exp': float(row['Area_Cost_Exp']),
                         'h_coeff': float(row.get('h_coeff', 0)), # Optional
                     }
-                    if util_data['Type'] == 'hot_utility': loaded_hot_utilities.append(util_data)
-                    elif util_data['Type'] == 'cold_utility': loaded_cold_utilities.append(util_data)
+                    if util_data['Type'] in ['hot_utility','hot']: loaded_hot_utilities.append(util_data)
+                    elif util_data['Type'] in ['cold_utility','cold'] : loaded_cold_utilities.append(util_data)
                     else: print(f"Warning: Unknown utility type '{row['Type']}' for utility '{row['Name']}'. Skipping.")
                 except KeyError as e:
                     print(f"Error: Missing column {e} in utilities.csv at row {row_idx+1}.")
@@ -634,11 +641,14 @@ def display_optimization_results(all_run_results, hen_problem_instance, model_na
                         
                         if abs(Tc_in_val - Tc_out_val) > 1e-6: cold_CFp = Q_val / abs(Tc_in_val - Tc_out_val)
                         if cold_stream_obj.CP > 1e-6: cold_Split_ratio = cold_CFp / cold_stream_obj.CP
+                        
+                        min_dT = min(abs(Th_in_val - Tc_out_val), abs(Th_out_val - Tc_in_val))
 
                         print(f"  {process_exchangers_count+1:2d}  {hot_name}-{cold_name} (Stage {detail.get('k',0)+1}): Q={Q_val:.2f} kW, Area={Area_val:.2f} m^2, U={U:.2f}, LMTD={lmtd:.2f}, Cost=${cost:.2f}")
                         print(f"      {hot_name}: FlowCp_branch={hot_CFp:.2f} (SplitFrac={hot_Split_ratio:.3f}), Tin={Th_in_val:.1f} K, Tout={Th_out_val:.1f} K")
-                        print(f"      {cold_name}: FlowCp_branch={cold_CFp:.2f} (SplitFrac={cold_Split_ratio:.3f}), Tin={Tc_in_val:.1f} K, Tout={Tc_out_val:.1f} K\n")
-                        
+                        print(f"      {cold_name}: FlowCp_branch={cold_CFp:.2f} (SplitFrac={cold_Split_ratio:.3f}), Tin={Tc_in_val:.1f} K, Tout={Tc_out_val:.1f} K")
+                        print(f"      Minimum Temperature Difference: {min_dT:.1f} K")
+                        print()
                         process_exchangers_count += 1
                         total_Q_recovered += Q_val
                         total_area_process_exch += Area_val
@@ -711,6 +721,8 @@ def display_optimization_results(all_run_results, hen_problem_instance, model_na
                 print("  Best solution chromosome, details, or HEN problem instance are missing. Cannot print detailed structure.")
         else:
             print(f"\nNo valid (finite optimized objective) best solution found across all runs for {model_name}.")
+        
+        print(f"Pinch Analysis (EMAT={hen_problem_instance.cost_params.EMAT}K): Q_H_min={hen_problem_instance.Q_H_min_pinch:.2f}kW, Q_C_min={hen_problem_instance.Q_C_min_pinch:.2f}kW")
         
         # --- After printing to console, call the export function ---
         if best_run_final_info and output_dir:

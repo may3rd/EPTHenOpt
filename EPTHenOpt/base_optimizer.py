@@ -9,6 +9,7 @@ including the complex Stage-Wise Superstructure (SWS) and cost evaluation.
 """
 import numpy as np
 import random
+from typing import List, Tuple, Optional, Any
 
 from .hen_models import HENProblem
 from .utils import calculate_lmtd, OBJ_KEY_OPTIMIZING, OBJ_KEY_REPORT, OBJ_KEY_CO2, TRUE_TAC_KEY
@@ -156,16 +157,10 @@ class BaseOptimizer:
 
     def _check_no_split_violation(self, Z_ijk):
         """Checks if the no-split constraint is violated."""
-        NH, NC, ST = self.problem.NH, self.problem.NC, self.problem.num_stages
-        for i in range(NH):
-            for k in range(ST):
-                if np.sum(Z_ijk[i, :, k]) > 1:
-                    return True
-        for j in range(NC):
-            for k in range(ST):
-                if np.sum(Z_ijk[:, j, k]) > 1:
-                    return True
-        return False
+        hot_violations = np.any(np.sum(Z_ijk, axis=1) > 1)
+        cold_violations = np.any(np.sum(Z_ijk, axis=0) > 1)
+        return hot_violations or cold_violations
+
 
     def _calculate_split_fractions(self, Z_ijk, R_hot_splits, R_cold_splits):
         """Calculates the actual split fractions FH_ijk and FC_ijk."""
@@ -175,41 +170,53 @@ class BaseOptimizer:
         
         epsilon = 1e-9 # A small number to prevent division by zero
 
-        for k in range(ST):
-            # Hot stream splits
-            for i in range(NH):
-                active_indices = np.where(Z_ijk[i, :, k] == 1)[0]
-                num_active = len(active_indices)
-                if num_active == 1:
-                    FH_ijk[i, active_indices[0], k] = 1.0
-                elif num_active > 1:
-                    raw_r = R_hot_splits[i, k, active_indices]
-                    sum_r = np.sum(raw_r)
-                    FH_ijk[i, active_indices, k] = raw_r / (sum_r + epsilon)
-            
-            # Cold stream splits
-            for j in range(NC):
-                active_indices = np.where(Z_ijk[:, j, k] == 1)[0]
-                num_active = len(active_indices)
-                if num_active == 1:
-                    FC_ijk[active_indices[0], j, k] = 1.0
-                elif num_active > 1:
-                    raw_r = R_cold_splits[j, k, active_indices]
-                    sum_r = np.sum(raw_r)
-                    FC_ijk[active_indices, j, k] = raw_r / (sum_r + epsilon)
-                    
+        if self.problem.no_split:
+            for k in range(ST):
+                for i in range(NH):
+                    active_indices = np.where(Z_ijk[i, :, k] == 1)[0]
+                    if len(active_indices) == 1:
+                        FH_ijk[i, active_indices[0], k] = 1.0
+                    elif len(active_indices) > 1:
+                        raise RuntimeError(f"No-split violation: Hot stream {i}, stage {k}")
+                for j in range(NC):
+                    active_indices = np.where(Z_ijk[:, j, k] == 1)[0]
+                    if len(active_indices) == 1:
+                        FC_ijk[active_indices[0], j, k] = 1.0
+                    elif len(active_indices) > 1:
+                        raise RuntimeError(f"No-split violation: Cold stream {j}, stage {k}")
+        else:
+            for k in range(ST):
+                # Hot stream splits
+                for i in range(NH):
+                    active_indices = np.where(Z_ijk[i, :, k] == 1)[0]
+                    num_active = len(active_indices)
+                    if num_active == 1:
+                        FH_ijk[i, active_indices[0], k] = 1.0
+                    elif num_active > 1:
+                        raw_r = R_hot_splits[i, k, active_indices]
+                        sum_r = np.sum(raw_r)
+                        FH_ijk[i, active_indices, k] = raw_r / (sum_r + epsilon)
+                
+                # Cold stream splits
+                for j in range(NC):
+                    active_indices = np.where(Z_ijk[:, j, k] == 1)[0]
+                    num_active = len(active_indices)
+                    if num_active == 1:
+                        FC_ijk[active_indices[0], j, k] = 1.0
+                    elif num_active > 1:
+                        raw_r = R_cold_splits[j, k, active_indices]
+                        sum_r = np.sum(raw_r)
+                        FC_ijk[active_indices, j, k] = raw_r / (sum_r + epsilon)
+
         return FH_ijk, FC_ijk
-    # In base_optimizer.py
 
     def _perform_sws(self, Z_ijk, FH_ijk, FC_ijk):
-        """Performs the Stage Wise Superstructure (SWS) calculation.
+        """Performs the Stage Wise Superstructure (SWS) calculation with non-isothermal mixing.
 
-        This is a highly optimized hybrid implementation. It pre-allocates
-        working arrays to minimize memory overhead inside the loops, while
-        vectorizing the core arithmetic for maximum performance.
+        This method calculates split outlet temperatures and computes mixed temperatures
+        as flow-weighted averages. If no heat exchange occurs, the outlet temperature
+        equals the inlet temperature.
         """
-        # 1. Initialization and Pre-computation
-        # ---------------------------------------
         NH, NC, ST = self.problem.NH, self.problem.NC, self.problem.num_stages
         EMAT = self.problem.cost_params.EMAT
 
@@ -219,92 +226,176 @@ class BaseOptimizer:
                     "final_Th_after_recovery": self._hs_Tin,
                     "final_Tc_after_recovery": self._cs_Tin}
 
+        # Initialize arrays
+        Q_ijk = np.zeros((NH, NC, ST))
         T_mix_H = self._initial_T_mix_H.copy()
         T_mix_C = self._initial_T_mix_C.copy()
-        Q_ijk = np.zeros((NH, NC, ST))
         
-        # --- Performance Critical: Pre-allocate working matrices ONCE ---
-        # These will be updated in-place inside the loop to avoid re-allocation.
         q_limits = np.empty((4, NH, NC))
         CPH_b_matrix = np.empty((NH, NC))
         CPC_b_matrix = np.empty((NH, NC))
         
-        # --- NEW: Pre-calculate a static feasibility mask for all stages ---
-        # This mask checks for fundamental thermodynamic impossibility.
-        # It assumes the worst case: coldest possible Th_in (target) and
-        # hottest possible Tc_in (target). A match is impossible if hs.Tout_target > cs.Tout_target
-        # This is a heuristic but effective pre-filter. A more precise check is still done inside.
         static_feasibility_mask = self._hs_Tout_target[:, np.newaxis] <= self._cs_Tout_target[np.newaxis, :]
-
-        # Combine with superstructure mask. A match can only happen if Z_ijk is ever 1.
-        # This prevents calculations for pairs that never match in any stage.
         combined_static_mask = Z_ijk.any(axis=2) * static_feasibility_mask
 
-        # 2. SWS Iteration Loop
-        # -----------------------
-        for sws_iter in range(self.sws_max_iter):
-            T_mix_H_prev = T_mix_H.copy()
-            T_mix_C_prev = T_mix_C.copy()
-
-            # 2a. Hot Pass (calculates Q_ijk for all stages)
-            # -----------------------------------------------
+        # Validate split fractions for no-split case
+        if self.problem.no_split:
+            # --- Check if Z_ijk for each stream at each stage if more than 1 then return False
             for k in range(ST):
-                # Skip stage if no matches are possible at all
-                if not Z_ijk[:, :, k].any():
-                    Q_ijk[:, :, k] = 0
-                    T_mix_H[:, k] = T_mix_H_prev[:, k-1] if k > 0 else self._hs_Tin
-                    continue
-                
-                TinH_stage_k = T_mix_H_prev[:, k - 1] if k > 0 else self._hs_Tin
-                Tcin_stage_k = T_mix_C_prev[:, k + 1] if k < ST - 1 else self._cs_Tin
-                
-                # --- NEW: Dynamic Feasibility Check for the current temperatures ---
-                # This is the precise check you requested.
-                dynamic_feasibility_mask = (TinH_stage_k[:, np.newaxis] > Tcin_stage_k[np.newaxis, :] + EMAT)
-                
-                # Final mask for this stage's calculation
-                active_mask = combined_static_mask * dynamic_feasibility_mask
+                for i in range(NH):
+                    if np.sum(Z_ijk[i, :, k]) > 1:
+                        if self.verbose:
+                            print(f"No-split violation: Hot stream {i}, stage {k}")
+                        return {"converged": False, "Q_ijk": Q_ijk, "T_mix_H": T_mix_H, "T_mix_C": T_mix_C,
+                                "final_Th_after_recovery": self._hs_Tin, "final_Tc_after_recovery": self._cs_Tin}
+                    if np.sum(FH_ijk[i, :, k]) > 1.0 + 1e-6:
+                        raise ValueError(f"Invalid FH_ijk sum for hot stream {i}, stage {k}: {np.sum(FH_ijk[i, :, k])}")
+                for j in range(NC):
+                    if np.sum(Z_ijk[:, j, k]) > 1:
+                        if self.verbose:
+                            print(f"No-split violation: Cold stream {j}, stage {k}")
+                        return {"converged": False, "Q_ijk": Q_ijk, "T_mix_H": T_mix_H, "T_mix_C": T_mix_C,
+                                "final_Th_after_recovery": self._hs_Tin, "final_Tc_after_recovery": self._cs_Tin}
+                    if np.sum(FC_ijk[:, j, k]) > 1.0 + 1e-6:
+                        raise ValueError(f"Invalid FC_ijk sum for cold stream {j}, stage {k}: {np.sum(FC_ijk[:, j, k])}")
 
-                # Update working matrices in-place where the mask is True
-                np.multiply(self._hs_CP[:, np.newaxis], FH_ijk[:, :, k], out=CPH_b_matrix, where=active_mask)
-                np.multiply(self._cs_CP[np.newaxis, :], FC_ijk[:, :, k], out=CPC_b_matrix, where=active_mask)
-                
-                # Calculate Q limits, writing results directly into the pre-allocated array `q_limits`
-                np.multiply(CPH_b_matrix, (TinH_stage_k[:, np.newaxis] - self._hs_Tout_target[:, np.newaxis]), out=q_limits[0], where=active_mask)
-                np.multiply(CPH_b_matrix, (TinH_stage_k[:, np.newaxis] - (Tcin_stage_k[np.newaxis, :] + EMAT)), out=q_limits[1], where=active_mask)
-                np.multiply(CPC_b_matrix, (self._cs_Tout_target[np.newaxis, :] - Tcin_stage_k[np.newaxis, :]), out=q_limits[2], where=active_mask)
-                np.multiply(CPC_b_matrix, ((TinH_stage_k[:, np.newaxis] - EMAT) - Tcin_stage_k[np.newaxis, :]), out=q_limits[3], where=active_mask)
+            # --- Doing calculation for heat balance ---
+            for sws_iter in range(self.sws_max_iter):
+                T_mix_H_prev = T_mix_H.copy()
+                T_mix_C_prev = T_mix_C.copy()
 
-                # Find the minimum limit and apply masks
-                Q_m = np.min(q_limits, axis=0)
-                # Set Q to 0 if it's below the minimum limit, then apply other masks.
-                Q_m_limited = np.where(Q_m >= self.problem.min_Q_limit, Q_m, 0)
-                Q_ijk[:, :, k] = Q_m_limited * active_mask
+                for k in range(ST):
+                    if not Z_ijk[:, :, k].any():
+                        Q_ijk[:, :, k] = 0
+                        continue
+                    
+                    TinH_stage_k = T_mix_H_prev[:, k - 1] if k > 0 else self._hs_Tin
+                    Tcin_stage_k = T_mix_C_prev[:, k + 1] if k < ST - 1 else self._cs_Tin
+                    
+                    dynamic_feasibility_mask = (TinH_stage_k[:, np.newaxis] > Tcin_stage_k[np.newaxis, :] + EMAT)
+                    active_mask = combined_static_mask * dynamic_feasibility_mask
 
-                # Update hot stream mixer temperatures
-                Q_total_from_hot_at_k = np.sum(Q_ijk[:, :, k], axis=1)
-                with np.errstate(divide='ignore', invalid='ignore'):
-                    delta_T = Q_total_from_hot_at_k / self._hs_CP
-                    T_mix_H[:, k] = TinH_stage_k - np.nan_to_num(delta_T)
+                    # ### use the same calculation for splitting but change FH to Z
+                    np.multiply(self._hs_CP[:, np.newaxis], Z_ijk[:, :, k], out=CPH_b_matrix, where=active_mask)
+                    np.multiply(self._cs_CP[np.newaxis, :], Z_ijk[:, :, k], out=CPC_b_matrix, where=active_mask)
+                    
+                    np.multiply(CPH_b_matrix, (TinH_stage_k[:, np.newaxis] - self._hs_Tout_target[:, np.newaxis]), out=q_limits[0], where=active_mask)
+                    np.multiply(CPH_b_matrix, (TinH_stage_k[:, np.newaxis] - (Tcin_stage_k[np.newaxis, :] + EMAT)), out=q_limits[1], where=active_mask)
+                    np.multiply(CPC_b_matrix, (self._cs_Tout_target[np.newaxis, :] - Tcin_stage_k[np.newaxis, :]), out=q_limits[2], where=active_mask)
+                    np.multiply(CPC_b_matrix, ((TinH_stage_k[:, np.newaxis] - EMAT) - Tcin_stage_k[np.newaxis, :]), out=q_limits[3], where=active_mask)  
+                    
+                    # Find the minimum limit and apply masks
+                    Q_m = np.min(q_limits, axis=0)
+                    # Set Q to 0 if it's below the minimum limit, then apply other masks.
+                    Q_m_limited = np.where(Q_m >= self.problem.min_Q_limit, Q_m, 0)
+                    Q_ijk[:, :, k] = Q_m_limited * active_mask
 
-            # 2b. Cold Pass
-            # -------------
-            for k in range(ST - 1, -1, -1):
-                TinC_stage_k = T_mix_C_prev[:, k + 1] if k < ST - 1 else self._cs_Tin
-                Q_total_to_cold_at_k = np.sum(Q_ijk[:, :, k], axis=0)
-                with np.errstate(divide='ignore', invalid='ignore'):
-                    delta_T = Q_total_to_cold_at_k / self._cs_CP
-                    T_mix_C[:, k] = TinC_stage_k + np.nan_to_num(delta_T)
+                    # Update hot stream mixer temperatures
+                    Q_total_from_hot_at_k = np.sum(Q_ijk[:, :, k], axis=1)
+                    with np.errstate(divide='ignore', invalid='ignore'):
+                        delta_T = Q_total_from_hot_at_k / self._hs_CP
+                        T_mix_H[:, k] = TinH_stage_k - np.nan_to_num(delta_T)
 
-            # 2c. Convergence Check
-            # -----------------------
-            delta_H = np.max(np.abs(T_mix_H - T_mix_H_prev)) if NH > 0 else 0
-            delta_C = np.max(np.abs(T_mix_C - T_mix_C_prev)) if NC > 0 else 0
+                # 2b. Cold Pass
+                # -------------
+                for k in range(ST - 1, -1, -1):
+                    TinC_stage_k = T_mix_C_prev[:, k + 1] if k < ST - 1 else self._cs_Tin
+                    Q_total_to_cold_at_k = np.sum(Q_ijk[:, :, k], axis=0)
+                    with np.errstate(divide='ignore', invalid='ignore'):
+                        delta_T = Q_total_to_cold_at_k / self._cs_CP
+                        T_mix_C[:, k] = TinC_stage_k + np.nan_to_num(delta_T)
 
-            if delta_H < self.sws_conv_tol and delta_C < self.sws_conv_tol and sws_iter > 0:
-                return {"converged": True, "Q_ijk": Q_ijk, "T_mix_H": T_mix_H, "T_mix_C": T_mix_C,
-                        "final_Th_after_recovery": T_mix_H[:, -1],
-                        "final_Tc_after_recovery": T_mix_C[:, 0]}
+                # 2c. Convergence Check
+                # -----------------------
+                delta_H = np.max(np.abs(T_mix_H - T_mix_H_prev)) if NH > 0 else 0
+                delta_C = np.max(np.abs(T_mix_C - T_mix_C_prev)) if NC > 0 else 0
+
+                if delta_H < self.sws_conv_tol and delta_C < self.sws_conv_tol and sws_iter > 0:
+                    return {"converged": True, "Q_ijk": Q_ijk, "T_mix_H": T_mix_H, "T_mix_C": T_mix_C,
+                            "final_Th_after_recovery": T_mix_H[:, -1],
+                            "final_Tc_after_recovery": T_mix_C[:, 0],
+                            "Th_out_splits": T_mix_H,
+                            "Tc_out_splits": T_mix_C}
+                    
+        else: ### Enable splitting flow
+            for sws_iter in range(self.sws_max_iter):
+                T_mix_H_prev = T_mix_H.copy()
+                T_mix_C_prev = T_mix_C.copy()
+
+                # Hot Pass
+                for k in range(ST):
+                    if not Z_ijk[:, :, k].any():
+                        Q_ijk[:, :, k] = 0
+                        continue
+                    
+                    TinH_stage_k = T_mix_H_prev[:, k - 1] if k > 0 else self._hs_Tin
+                    Tcin_stage_k = T_mix_C_prev[:, k + 1] if k < ST - 1 else self._cs_Tin
+                    
+                    dynamic_feasibility_mask = (TinH_stage_k[:, np.newaxis] > Tcin_stage_k[np.newaxis, :] + EMAT)
+                    active_mask = combined_static_mask * dynamic_feasibility_mask
+
+                    np.multiply(self._hs_CP[:, np.newaxis], FH_ijk[:, :, k], out=CPH_b_matrix, where=active_mask)
+                    np.multiply(self._cs_CP[np.newaxis, :], FC_ijk[:, :, k], out=CPC_b_matrix, where=active_mask)
+                    
+                    np.multiply(CPH_b_matrix, (TinH_stage_k[:, np.newaxis] - self._hs_Tout_target[:, np.newaxis]), out=q_limits[0], where=active_mask)
+                    np.multiply(CPH_b_matrix, (TinH_stage_k[:, np.newaxis] - (Tcin_stage_k[np.newaxis, :] + EMAT)), out=q_limits[1], where=active_mask)
+                    np.multiply(CPC_b_matrix, (self._cs_Tout_target[np.newaxis, :] - Tcin_stage_k[np.newaxis, :]), out=q_limits[2], where=active_mask)
+                    np.multiply(CPC_b_matrix, ((TinH_stage_k[:, np.newaxis] - EMAT) - Tcin_stage_k[np.newaxis, :]), out=q_limits[3], where=active_mask)
+
+                    Q_m = np.min(q_limits, axis=0)
+                    Q_m_limited = np.where(Q_m >= self.problem.min_Q_limit, Q_m, 0)
+                    Q_ijk[:, :, k] = Q_m_limited * active_mask
+
+                    # Calculate split outlet temperatures for hot streams
+                    Th_out_splits = np.full((NH, NC), np.nan)
+                    for i in range(NH):
+                        for j in range(NC):
+                            if Z_ijk[i, j, k] == 1:
+                                CPH_b = self._hs_CP[i] * FH_ijk[i, j, k]
+                                if CPH_b > 1e-9:
+                                    Th_out_splits[i, j] = TinH_stage_k[i] - Q_ijk[i, j, k] / CPH_b
+                                else:
+                                    Th_out_splits[i, j] = TinH_stage_k[i]
+                                    
+                    # Calculate split outlet temperature for cold stream
+                    Tc_out_splits = np.full((NH, NC), np.nan)
+                    for j in range(NC):
+                        for i in range(NH):
+                            if Z_ijk[i, j, k] == 1:
+                                CPC_b = self._cs_CP[j] * FC_ijk[i, j, k]
+                                if CPC_b > 1e-9:
+                                    Tc_out_splits[i, j] = Tcin_stage_k[j] + Q_ijk[i, j, k] / CPC_b
+                                else:
+                                    Tc_out_splits[i, j] = Tcin_stage_k[j]
+                    
+                    # Compute mixed temperature for hot streams
+                    for i in range(NH):
+                        active_splits = np.where(Z_ijk[i, :, k] == 1)[0]
+                        if len(active_splits) > 0:
+                            weights = FH_ijk[i, active_splits, k]
+                            temps = Th_out_splits[i, active_splits]
+                            T_mix_H[i, k] = np.sum(weights * temps) / np.sum(weights) if np.sum(weights) > 1e-9 else TinH_stage_k[i]
+                        else:
+                            T_mix_H[i, k] = TinH_stage_k[i]
+
+                # Cold Pass
+                for k in range(ST - 1, -1, -1):
+                    TinC_stage_k = T_mix_C_prev[:, k + 1] if k < ST - 1 else self._cs_Tin
+                    Q_total_to_cold_at_k = np.sum(Q_ijk[:, :, k], axis=0)
+                    with np.errstate(divide='ignore', invalid='ignore'):
+                        delta_T = Q_total_to_cold_at_k / self._cs_CP
+                        T_mix_C[:, k] = TinC_stage_k + np.nan_to_num(delta_T)
+
+                # Convergence Check
+                delta_H = np.max(np.abs(T_mix_H - T_mix_H_prev)) if NH > 0 else 0
+                delta_C = np.max(np.abs(T_mix_C - T_mix_C_prev)) if NC > 0 else 0
+
+                if delta_H < self.sws_conv_tol and delta_C < self.sws_conv_tol and sws_iter > 0:
+                    return {"converged": True, "Q_ijk": Q_ijk, "T_mix_H": T_mix_H, "T_mix_C": T_mix_C,
+                            "final_Th_after_recovery": T_mix_H[:, -1],
+                            "final_Tc_after_recovery": T_mix_C[:, 0],
+                            "Th_out_splits": Th_out_splits,
+                            "Tc_out_splits": Tc_out_splits}
 
         return {"converged": False, "Q_ijk": np.zeros((NH, NC, ST)),
                     "T_mix_H": np.empty((NH, ST)), "T_mix_C": np.empty((NC, ST)),
@@ -312,7 +403,6 @@ class BaseOptimizer:
                     "final_Tc_after_recovery": self._cs_Tin}
 
     def _calculate_process_exchanger_costs(self, Z_ijk, sws_results, FH_ijk, FC_ijk, adaptive_penalty):
-        """Calculates capital cost and EMAT penalty for process exchangers."""
         capital_cost = 0.0
         penalty_EMAT = 0.0
         details = []
@@ -338,7 +428,6 @@ class BaseOptimizer:
                         Th_out = Th_in - Q / CPH_b
                         Tc_out = Tc_in + Q / CPC_b
 
-                        # EMAT penalty check
                         if (Th_in - Tc_out) < EMAT - 1e-3: penalty_EMAT += adaptive_penalty * (EMAT - (Th_in - Tc_out))
                         if (Th_out - Tc_in) < EMAT - 1e-3: penalty_EMAT += adaptive_penalty * (EMAT - (Th_out - Tc_in))
 
@@ -378,7 +467,8 @@ class BaseOptimizer:
             Q_needed = hs.CP * (final_Th[i] - hs.Tout_target)
             if Q_needed > self.problem.min_Q_limit and hs.CP > 1e-9:
                 best_cu_choice = {'cost': float('inf')}
-                for cu in self.problem.cold_utility:
+                for icu in range(len(self.problem.cold_utility)):
+                    cu = self.problem.cold_utility[icu]
                     is_forbidden = any(f.get('hot') == hs.id and f.get('cold') == cu.id for f in self.problem.forbidden_matches or [])
                     if is_forbidden: continue
 
@@ -388,7 +478,8 @@ class BaseOptimizer:
                     if Th_in < Tc_out + EMAT - 1e-3 or Th_out < Tc_in + EMAT - 1e-3: continue # EMAT violation
 
                     lmtd = calculate_lmtd(Th_in, Th_out, Tc_in, Tc_out)
-                    area = Q_needed / (cu.U * lmtd) if cu.U * lmtd > 1e-9 else 1e9
+                    U = self.problem.U_coolers[i, icu]
+                    area = Q_needed / (U * lmtd) if U * lmtd > 1e-9 else 1e9
                     if area < 0: area = 1e9
 
                     cap_cost = cu.fix_cost + cu.area_cost_coeff * (area ** cu.area_cost_exp)
@@ -417,7 +508,9 @@ class BaseOptimizer:
             Q_needed = cs.CP * (cs.Tout_target - final_Tc[j])
             if Q_needed > self.problem.min_Q_limit and cs.CP > 1e-9:
                 best_hu_choice = {'cost': float('inf')}
-                for hu in self.problem.hot_utility:
+                for ihu in range(len(self.problem.hot_utility)):
+                    hu = self.problem.hot_utility[ihu]
+                    
                     is_forbidden = any(f.get('hot') == hu.id and f.get('cold') == cs.id for f in self.problem.forbidden_matches or [])
                     if is_forbidden: continue
 
@@ -427,7 +520,8 @@ class BaseOptimizer:
                     if Th_in < Tc_out + EMAT - 1e-3 or Th_out < Tc_in + EMAT - 1e-3: continue
 
                     lmtd = calculate_lmtd(Th_in, Th_out, Tc_in, Tc_out)
-                    area = Q_needed / (hu.U * lmtd) if hu.U * lmtd > 1e-9 else 1e9
+                    U = self.problem.U_heaters[ihu, j]
+                    area = Q_needed / (U * lmtd) if U * lmtd > 1e-9 else 1e9
                     if area < 0: area = 1e9
 
                     cap_cost = hu.fix_cost + hu.area_cost_coeff * (area ** hu.area_cost_exp)

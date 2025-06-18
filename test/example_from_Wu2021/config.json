@@ -1,7 +1,7 @@
 {
     "file_paths": {
-        "streams_file": "test/example1/streams.csv",
-        "utilities_file": "test/example1/utilities.csv",
+        "streams_file": "test/example_from_Wu2021/streams.csv",
+        "utilities_file": "test/example_from_Wu2021/utilities.csv",
         "matches_U_file": null,
         "forbidden_matches_file": null,
         "required_matches_file": null
@@ -12,35 +12,35 @@
         "default_co2_cold_utility": 0.05
     },
     "core_optimization": {
-        "model": "GA",
+        "model": "TLBO",
         "population_size": 100,
         "epochs": 10,
-        "generations_per_epoch": 30,
-        "number_of_workers": 1,
+        "generations_per_epoch": 50,
+        "number_of_workers": 8,
         "num_stages": 0,
         "verbose": false,
         "no_split": false,
-        "output_dir": "test/example1/output"
+        "output_dir": "test/example_from_Wu2021/output"
     },
     "problem_cost_parameters": {
-        "EMAT_setting": 3.0,
-        "default_U_overall": 0.8,
+        "EMAT_setting": 15.35,
+        "LMTD_method": "Chen",
+        "default_U_overall": 0.0,
         "mininum_Q_limit": 1.0,
-        "LMTD_method": "std",
         "exchanger": {
-            "fixed_cost": 0.0,
-            "area_coeff": 1000.0,
-            "area_exp": 0.6
+            "fixed_cost": 2000.0,
+            "area_coeff": 70.0,
+            "area_exp": 1.0
         },
         "heater": {
-            "fixed_cost": 0.0,
-            "area_coeff": 1200.0,
-            "area_exp": 0.6
+            "fixed_cost": 2000.0,
+            "area_coeff": 70.0,
+            "area_exp": 1.0
         },
         "cooler": {
-            "fixed_cost": 0.0,
-            "area_coeff": 1000.0,
-            "area_exp": 0.6
+            "fixed_cost": 2000.0,
+            "area_coeff": 70.0,
+            "area_exp": 1.0
         }
     },
     "ga_parameters": {
@@ -71,10 +71,10 @@
     },
     "fitness_penalty_parameters": {
         "utility_cost_factor": 1.0,
-        "pinch_dev_penalty_factor": 150.0,
+        "pinch_dev_penalty_factor": 10.0,
         "sws_max_iter": 300,
         "sws_conv_tol": 1e-5,
-        "initial_penalty": 1000.0,
+        "initial_penalty": 10000.0,
         "final_penalty": 10000000.0
     }
 }

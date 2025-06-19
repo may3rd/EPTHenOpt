@@ -2,7 +2,7 @@
     "file_paths": {
         "streams_file": "test/example1/streams.csv",
         "utilities_file": "test/example1/utilities.csv",
-        "matches_U_file": null,
+        "matches_U_file": "test/example1/matches_U_cost.csv",
         "forbidden_matches_file": null,
         "required_matches_file": null
     },
@@ -15,15 +15,15 @@
         "model": "GA",
         "population_size": 200,
         "epochs": 10,
-        "generations_per_epoch": 100,
-        "number_of_workers": 4,
-        "num_stages": 0,
+        "generations_per_epoch": 50,
+        "number_of_workers": 1,
+        "num_stages": 3,
         "verbose": false,
         "no_split": false,
         "output_dir": "test/example1/output"
     },
     "problem_cost_parameters": {
-        "EMAT_setting": 3.0,
+        "EMAT_setting": 10.0,
         "default_U_overall": 0.8,
         "mininum_Q_limit": 1.0,
         "LMTD_method": "std",

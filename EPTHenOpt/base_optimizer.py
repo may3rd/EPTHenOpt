@@ -171,6 +171,11 @@ class BaseOptimizer:
         epsilon = 1e-9 # A small number to prevent division by zero
 
         if self.problem.no_split:
+            FH_ijk[:, :, :] = Z_ijk[:, :, :]
+            FC_ijk[:, :, :] = Z_ijk[:, :, :]
+            
+            return FH_ijk, FC_ijk
+        
             for k in range(ST):
                 for i in range(NH):
                     active_indices = np.where(Z_ijk[i, :, k] == 1)[0]
@@ -235,7 +240,7 @@ class BaseOptimizer:
         Tc_out_splits = np.full((NH, NC, ST), np.nan)
         
         # Initialize temporary arrays
-        q_limits = np.empty((4, NH, NC))
+        q_limits = np.empty((3, NH, NC))
         CPH_b_matrix = np.empty((NH, NC))
         CPC_b_matrix = np.empty((NH, NC))
         
@@ -286,11 +291,6 @@ class BaseOptimizer:
                 # Feasibility check
                 dynamic_feasibility_mask = (TinH_stage_k[:, np.newaxis] > Tcin_stage_k[np.newaxis, :] + EMAT)
                 active_mask = combined_static_mask * dynamic_feasibility_mask
-                
-                # Adjust F_ijk for no_split case
-                if self.problem.no_split:
-                    FH_ijk[:, :, k] = Z_ijk[:, :, k]
-                    FC_ijk[:, :, k] = Z_ijk[:, :, k]
 
                 # Compute split heat capacities
                 np.multiply(self._hs_CP[:, np.newaxis], FH_ijk[:, :, k], out=CPH_b_matrix, where=active_mask)
@@ -300,7 +300,6 @@ class BaseOptimizer:
                 np.multiply(CPH_b_matrix, (TinH_stage_k[:, np.newaxis] - self._hs_Tout_target[:, np.newaxis]), out=q_limits[0], where=active_mask)
                 np.multiply(CPH_b_matrix, (TinH_stage_k[:, np.newaxis] - (Tcin_stage_k[np.newaxis, :] + EMAT)), out=q_limits[1], where=active_mask)
                 np.multiply(CPC_b_matrix, (self._cs_Tout_target[np.newaxis, :] - Tcin_stage_k[np.newaxis, :]), out=q_limits[2], where=active_mask)
-                np.multiply(CPC_b_matrix, (TinH_stage_k[:, np.newaxis] - EMAT - Tcin_stage_k[np.newaxis, :]), out=q_limits[3], where=active_mask)
 
                 # Compute heat loads
                 Q_m = np.min(q_limits, axis=0)

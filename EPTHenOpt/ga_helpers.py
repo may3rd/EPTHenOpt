@@ -62,6 +62,76 @@ class GeneticAlgorithmHEN(BaseOptimizer, GAVariationMixin):
 
     # _calculate_fitness, _decode_chromosome, _create_random_full_chromosome, _initialize_population
     # are now inherited from BaseOptimizer.
+    
+    def _repair_chromosome(self, chromosome):
+        """
+        Ensures chromosome validity.
+        1. If no_split is True, it enforces that each stream has at most one
+        match per stage by randomly selecting one and disabling others.
+        2. It forces R (split ratio) values to zero for any non-existent
+        match (where Z=0).
+        """
+        repaired_chromosome = chromosome.copy()
+        Z_ijk, R_hot, R_cold = self._decode_chromosome(repaired_chromosome)
+
+        # --- Part 1: Repair Z matrix for no-split constraint (if active) ---
+        if self.problem.no_split:
+            # ### Nothing to be done since no-split caes chromosome hoas on R
+            return repaired_chromosome
+        
+            # Check and repair hot streams
+            for i in range(self.problem.NH):
+                for k in range(self.problem.num_stages):
+                    active_matches_indices = np.where(Z_ijk[i, :, k] == 1)[0]
+                    if len(active_matches_indices) > 1:
+                        # An illegal split exists for hot stream i in stage k.
+                        # Randomly choose one match to keep.
+                        chosen_index_to_keep = random.choice(active_matches_indices)
+                        
+                        # Turn off all other matches for this stream in this stage.
+                        for j_idx in active_matches_indices:
+                            if j_idx != chosen_index_to_keep:
+                                Z_ijk[i, j_idx, k] = 0
+
+            # Check and repair cold streams
+            for j in range(self.problem.NC):
+                for k in range(self.problem.num_stages):
+                    active_matches_indices = np.where(Z_ijk[:, j, k] == 1)[0]
+                    if len(active_matches_indices) > 1:
+                        # An illegal split exists for cold stream j in stage k.
+                        chosen_index_to_keep = random.choice(active_matches_indices)
+                        
+                        # Turn off all other matches for this stream in this stage.
+                        for i_idx in active_matches_indices:
+                            if i_idx != chosen_index_to_keep:
+                                Z_ijk[i_idx, j, k] = 0
+
+        # --- Part 2: Repair R matrices based on the (potentially modified) Z matrix ---
+        # This part runs regardless of the no_split setting.
+        
+        # Create a boolean mask of where Z is zero
+        z_is_zero_mask = (Z_ijk == 0)
+
+        # Use this mask to find the corresponding locations in R and set them to zero.
+        # We need to reshape/broadcast the mask to fit the R matrices' shapes.
+        
+        # For R_hot (NH, ST, NC), we need to permute the Z mask from (NH, NC, ST)
+        z_mask_for_R_hot = np.transpose(z_is_zero_mask, (0, 2, 1))
+        R_hot[z_mask_for_R_hot] = 0.0
+
+        # For R_cold (NC, ST, NH), we also need to permute the Z mask
+        z_mask_for_R_cold = np.transpose(z_is_zero_mask, (1, 2, 0))
+        R_cold[z_mask_for_R_cold] = 0.0
+
+        # --- Re-assemble the repaired chromosome ---
+        # Flatten all parts and concatenate them back together.
+        repaired_z_flat = Z_ijk.flatten()
+        repaired_r_hot_flat = R_hot.flatten() # type: ignore
+        repaired_r_cold_flat = R_cold.flatten() # type: ignore
+        
+        final_repaired_chromosome = np.concatenate((repaired_z_flat, repaired_r_hot_flat, repaired_r_cold_flat))
+        
+        return final_repaired_chromosome
 
     def _crossover(self, parent1_chromo, parent2_chromo):
         """Performs single-point crossover on two parent chromosomes."""
@@ -92,6 +162,9 @@ class GeneticAlgorithmHEN(BaseOptimizer, GAVariationMixin):
         for i in range(self.len_Z):
             if random.random() < self.mutation_prob_Z:
                 mutated_chromosome[i] = 1 - mutated_chromosome[i]
+        
+        if self.problem.no_split:
+            return mutated_chromosome
         
         # Mutate the continuous (R) parts
         for i in range(self.len_Z, self.chromosome_length):
@@ -199,11 +272,15 @@ class GeneticAlgorithmHEN(BaseOptimizer, GAVariationMixin):
 
                 offspring1, offspring2 = self._crossover(parent1, parent2)
                 
+                # -- repair offspring
+                offspring1 = self._repair_chromosome(offspring1)
+                offspring2 = self._repair_chromosome(offspring2)
+                
                 if children_generated < num_offspring_to_generate:
-                    new_population.append(self._mutation(offspring1))
+                    new_population.append(self._repair_chromosome(self._mutation(offspring1)))
                     children_generated += 1
                 if children_generated < num_offspring_to_generate: # Check again
-                    new_population.append(self._mutation(offspring2))
+                    new_population.append(self._repair_chromosome(self._mutation(offspring2)))
                     children_generated += 1
         
         self.population = new_population

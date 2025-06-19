@@ -12,11 +12,11 @@
         "default_co2_cold_utility": 0.05
     },
     "core_optimization": {
-        "model": "TLBO",
-        "population_size": 100,
+        "model": "GA",
+        "population_size": 500,
         "epochs": 10,
         "generations_per_epoch": 50,
-        "number_of_workers": 8,
+        "number_of_workers": 4,
         "num_stages": 0,
         "verbose": false,
         "no_split": false,
@@ -24,7 +24,7 @@
     },
     "problem_cost_parameters": {
         "EMAT_setting": 15.35,
-        "LMTD_method": "Chen",
+        "LMTD_method": "std",
         "default_U_overall": 0.0,
         "mininum_Q_limit": 1.0,
         "exchanger": {

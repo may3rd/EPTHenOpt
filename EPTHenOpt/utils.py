@@ -15,6 +15,8 @@ import numpy as np # Added for np.argwhere
 import copy      # Added for copy.deepcopy
 from pathlib import Path
 import json
+from typing import Dict, Any
+import os
 
 MIN_LMTD = 1e-6
 
@@ -727,6 +729,115 @@ def display_optimization_results(all_run_results, hen_problem_instance, model_na
         # --- After printing to console, call the export function ---
         if best_run_final_info and output_dir:
             export_results(best_run_final_info, hen_problem_instance, output_dir)
+
+# ==============================================================================
+#  The New Export Function
+# ==============================================================================
+def export_for_imitation_learning(
+    all_run_results, 
+    problem_definition,
+    output_filepath: str,
+    problem_name: str = "GA Expert Solution",
+    description: str = "An optimal network found by the Genetic Algorithm."
+):
+    """
+    Analyzes the result from a GA optimization run and exports it to a JSON
+    file formatted for imitation learning with the StageWiseHENGymEnv.
+
+    Args:
+        best_run_final_info (Dict): The dictionary containing the best run's 
+                                    results, including the 'details' key.
+        hen_problem_instance (Any): The HEN problem instance used for the 
+                                    optimization. Must have attributes like 
+                                    .hot_streams, .cold_streams, etc.
+        output_filepath (str): The path to save the output JSON file.
+        problem_name (str): A name for this solution.
+        description (str): A description for this solution.
+    """
+    print(f"Exporting GA solution to imitation learning format: {output_filepath}")
+
+    # --- 1. Reconstruct the Action Sequence (the q_matrices) ---
+    # Need to load stream data to know n_hot and n_cold
+    with open(problem_definition['streams_filepath'], 'r') as f:
+        reader = csv.DictReader(f)
+        streams = list(reader)
+    num_hot = sum(1 for s in streams if s['Type'].lower() == 'hot')
+    num_cold = sum(1 for s in streams if s['Type'].lower() == 'cold')
+    num_stages = problem_definition['num_stages']
+    
+    action_sequence_q_matrices = [
+        [[0.0 for _ in range(num_cold)] for _ in range(num_hot)] for _ in range(num_stages)
+    ]
+    
+    best_overall_objective_val = float('inf') # Use a generic term, as it's model's objective
+    best_run_final_info = None   
+    
+    for run_result in all_run_results:
+        if not run_result or 'costs' not in run_result or run_result['costs'] is None:
+            print(f"Skipping invalid run result: {run_result}")
+            continue
+
+        # The key used for optimization (e.g., OBJ_KEY_OPTIMIZING or a similar objective for TLBO)
+        objective_val = run_result['costs'].get(OBJ_KEY_OPTIMIZING, float('inf')) 
+        true_tac_for_display = run_result['costs'].get(TRUE_TAC_KEY, float('inf'))
+
+        objective_val_str = f"{objective_val:.2f}" if objective_val != float('inf') else "Inf"
+        true_tac_str = f"{true_tac_for_display:.2f}" if true_tac_for_display != float('inf') else "Inf"
+        
+        print(f"Run with Seed {run_result.get('seed', 'N/A')}: True TAC = {true_tac_str} (Optimized Obj. = {objective_val_str})")
+        
+        if objective_val < best_overall_objective_val : 
+            best_overall_objective_val = objective_val
+            best_run_final_info = copy.deepcopy(run_result)
+    
+    # Get the detailed list of placed exchangers from the GA result
+    exchanger_details = best_run_final_info.get('details', [])
+
+    for detail in exchanger_details:
+        # We only care about process-to-process exchangers for the action sequence
+        if 'type' not in detail and 'H' in detail and 'C' in detail:
+            stage_k = detail['k']
+            hot_idx_i = detail['H']
+            cold_idx_j = detail['C']
+            heat_duty_q = detail['Q']
+
+            # Populate the q_matrix for the corresponding stage
+            if stage_k < num_stages:
+                action_sequence_q_matrices[stage_k][hot_idx_i][cold_idx_j] = heat_duty_q
+
+    # --- 2. Assemble the Final JSON Structure with File Paths ---
+    output_data = {
+        "problem_name": problem_name,
+        "description": description,
+        "problem_definition": {
+            "streams_filepath": problem_definition['streams_filepath'],
+            "utilities_filepath": problem_definition['utilities_filepath'],
+            "matches_cost_filepath": problem_definition['matches_cost_filepath'],
+            "num_stages": num_stages,
+            "min_deltaT": problem_definition['min_deltaT'],
+            "cost_parameters": problem_definition.get('cost_parameters', {})
+        },
+        "expert_action_sequence": action_sequence_q_matrices
+    }
+
+    # --- 3. Save to File ---
+    try:
+        # Check if the file exists and load its content
+        if os.path.exists(output_filepath):
+            with open(output_filepath, 'r') as f:
+                existing_data = json.load(f)
+        else:
+            existing_data = []
+        
+        # Append the new solution
+        existing_data.append(output_data)
+        
+        # Write the updated list back to the file
+        with open(output_filepath, 'w') as f:
+            json.dump(existing_data, f, indent=4)
+        print(f"Successfully appended expert solution to '{output_filepath}'")
+    except Exception as e:
+        print(f"Error saving JSON file: {e}")
 
 def display_problem_summary(hen_problem):
     """Prints a summary of the HEN problem definition to the console."""

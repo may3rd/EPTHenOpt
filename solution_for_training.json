@@ -1,0 +1,73 @@
+[
+    {
+        "problem_name": "GA Result for 2H-2C problem",
+        "description": "",
+        "problem_definition": {
+            "hot_streams": [
+                [
+                    443.0,
+                    333.0,
+                    30.0
+                ],
+                [
+                    423.0,
+                    303.0,
+                    15.0
+                ]
+            ],
+            "cold_streams": [
+                [
+                    293.0,
+                    408.0,
+                    20.0
+                ],
+                [
+                    353.0,
+                    413.0,
+                    40.0
+                ]
+            ],
+            "num_stages": 3,
+            "min_deltaT": 10.0,
+            "cost_parameters": {
+                "hot_utility_cost_rate": 80.0,
+                "cold_utility_cost_rate": 20.0,
+                "exchanger_fixed_cost": 0.0,
+                "exchanger_area_cost_coeff": 1000.0,
+                "exchanger_area_cost_exponent": 0.6
+            }
+        },
+        "expert_action_sequence": [
+            [
+                [
+                    0.0,
+                    2399.0570374429535
+                ],
+                [
+                    899.8420736457142,
+                    0.0
+                ]
+            ],
+            [
+                [
+                    900.0387282258886,
+                    0.0
+                ],
+                [
+                    0.0,
+                    0.0
+                ]
+            ],
+            [
+                [
+                    0.0,
+                    0.0
+                ],
+                [
+                    300.1686439358089,
+                    0.0
+                ]
+            ]
+        ]
+    }
+]

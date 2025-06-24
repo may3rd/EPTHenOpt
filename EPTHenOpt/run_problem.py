@@ -25,6 +25,7 @@ from .nsga2_helpers import NSGAIIHEN
 from .utils import (
     load_data_from_csv, display_optimization_results,
     display_problem_summary, display_help,
+    export_for_imitation_learning,
     OBJ_KEY_OPTIMIZING, OBJ_KEY_REPORT, OBJ_KEY_CO2, TRUE_TAC_KEY
 )
 from .cores import run_parallel_with_migration
@@ -242,6 +243,21 @@ def main(args):
 
     print(f"\nOptimization completed in {elapsed_time:.2f} seconds.")
     display_optimization_results(processed_results, hen_problem, args.model, args.output_dir)
+    
+    problem_definition_for_export = {
+        "streams_filepath": "streams.csv",
+        "utilities_filepath": "utilities.csv",
+        "matches_cost_filepath": "matches_cost.csv",
+        "num_stages": 2,
+        "min_deltaT": 10.0,
+        "cost_parameters": { "default_fixed_cost": 500.0 }
+    }
+    
+    export_for_imitation_learning(processed_results,
+                                  problem_definition=problem_definition_for_export,
+                                  output_filepath='solution_for_training.json',
+                                  problem_name='GA Result problem',
+                                  description='An optimum solution for training')
 
 
 def cli():
